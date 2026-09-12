@@ -1,5 +1,6 @@
 import { CLAIM_TYPES, SENTIMENTS } from "../../../domain/evidence/claim.js";
 import { SHARED_RULES, type PromptTemplate } from "./prompt-template.js";
+import { KOREAN_STYLE_RULES } from "./korean-style.js";
 
 /** SYSTEM_INFERENCE 는 signal 에서만 생기므로 LLM 에게 허용하지 않는다. */
 export const EXTRACTABLE_CLAIM_TYPES = CLAIM_TYPES.filter((type) => type !== "SYSTEM_INFERENCE");
@@ -9,6 +10,8 @@ const SYSTEM = [
   "A claim is one checkable statement that the provided evidence supports.",
   "",
   SHARED_RULES,
+  "",
+  KOREAN_STYLE_RULES,
   "",
   "Evidence:",
   '- Every document block contains evidence units. Each unit starts with a marker of the form evidence id="evd_..."',
@@ -65,7 +68,7 @@ const OUTPUT_SCHEMA = {
 
 export const EXTRACT_CLAIMS_PROMPT: PromptTemplate = {
   promptId: "extract-claims",
-  promptVersion: "v1",
+  promptVersion: "v2",
   system: SYSTEM,
   outputSchema: OUTPUT_SCHEMA,
   maxOutputTokens: 6000,

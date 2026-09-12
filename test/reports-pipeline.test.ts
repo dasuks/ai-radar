@@ -328,7 +328,7 @@ describe("reports 단계", () => {
     assert.ok(llm.callsFor("WRITE_SECTION_REPORT").length >= 1);
     assert.equal(llm.callsFor("WRITE_DIGEST").length, 1);
     assert.equal(llm.callsFor("WRITE_BRIEF_KO").length, 1);
-    assert.equal(llm.callsFor("WRITE_BRIEF_KO")[0]!.req.promptVersion, "v2");
+    assert.equal(llm.callsFor("WRITE_BRIEF_KO")[0]!.req.promptVersion, "v3");
 
     // Daily 의 item id 는 리포트 항목 id 와 같다.
     const itemIds = body.sections.flatMap((section) => section.items.map((item) => item.id)).sort();

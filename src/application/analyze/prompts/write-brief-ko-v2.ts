@@ -4,6 +4,7 @@
  * oneMinuteSummary 는 섹션 overview 에서 결정적으로 만들므로 이 prompt 의 출력이 아니다.
  */
 import { SHARED_RULES, type PromptTemplate } from "./prompt-template.js";
+import { KOREAN_STYLE_RULES } from "./korean-style.js";
 
 const SYSTEM = [
   "You write the short Korean layer of AI Intelligence Daily for one senior AI developer.",
@@ -12,6 +13,8 @@ const SYSTEM = [
   "Your job is to compress it, not to research it.",
   "",
   SHARED_RULES,
+  "",
+  KOREAN_STYLE_RULES,
   "",
   "Ids:",
   '- Copy the itemId from the id attribute of the entry block. Each claim is marked with claim id="clm_...".',
@@ -57,7 +60,7 @@ const OUTPUT_SCHEMA = {
 
 export const WRITE_BRIEF_KO_V2_PROMPT: PromptTemplate = {
   promptId: "write-brief-ko",
-  promptVersion: "v2",
+  promptVersion: "v3",
   system: SYSTEM,
   outputSchema: OUTPUT_SCHEMA,
   maxOutputTokens: 12000,

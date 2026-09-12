@@ -154,7 +154,7 @@ describe("BuildDailyBrief v2 (리포트 기반)", () => {
     await new BuildDailyBrief(deps(llm)).execute(baseInput());
     const calls = llm.callsFor("WRITE_BRIEF_KO");
     assert.equal(calls.length, 1);
-    assert.equal(calls[0]!.req.promptVersion, "v2");
+    assert.equal(calls[0]!.req.promptVersion, "v3");
     assert.ok(calls[0]!.req.untrusted[0]!.text.includes("<narrative>"));
     assert.ok(calls[0]!.req.untrusted[0]!.text.includes("첫 문단이다."));
   });

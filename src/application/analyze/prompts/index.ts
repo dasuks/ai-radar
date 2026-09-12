@@ -11,3 +11,4 @@ export {
   sectionReportSystem,
 } from "./write-section-report.js";
 export { WRITE_DIGEST_PROMPT, DIGEST_BATCH_SIZE, DIGEST_TITLE_ONLY_SUMMARY } from "./write-digest.js";
+export { KOREAN_STYLE_RULES } from "./korean-style.js";

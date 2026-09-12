@@ -4,6 +4,7 @@
  * 입력은 그 섹션의 자격 항목(entry)들이며, 각 블록에 claim / evidence / comment 가 들어 있다.
  */
 import { SHARED_RULES, type PromptTemplate } from "./prompt-template.js";
+import { KOREAN_STYLE_RULES } from "./korean-style.js";
 
 /** 한 호출에 넣는 entry 최대 개수 (§11: 8개 초과 시 분할). */
 export const SECTION_REPORT_BATCH_SIZE = 8;
@@ -19,6 +20,8 @@ const SYSTEM = [
   "and (when available) community comments.",
   "",
   SHARED_RULES,
+  "",
+  KOREAN_STYLE_RULES,
   "",
   "Evidence and claims:",
   '- Each entry block starts with its claims. Each claim is marked with claim id="clm_..." and each evidence with evidence id="evd_...".',
@@ -91,7 +94,7 @@ const OUTPUT_SCHEMA = {
 
 export const WRITE_SECTION_REPORT_PROMPT: PromptTemplate = {
   promptId: "write-section-report",
-  promptVersion: "v1",
+  promptVersion: "v2",
   system: SYSTEM,
   outputSchema: OUTPUT_SCHEMA,
   maxOutputTokens: 24000,

@@ -3,6 +3,7 @@
  * 버려지는 이야기가 없어야 하므로, 모델이 빠뜨린 story 는 호출자가 결정적 fallback 으로 채운다.
  */
 import { SHARED_RULES, type PromptTemplate } from "./prompt-template.js";
+import { KOREAN_STYLE_RULES } from "./korean-style.js";
 
 /** 한 호출에 넣는 story 최대 개수. */
 export const DIGEST_BATCH_SIZE = 20;
@@ -13,6 +14,8 @@ const SYSTEM = [
   "(sometimes the full article, sometimes only the title, sometimes a few extracted claims).",
   "",
   SHARED_RULES,
+  "",
+  KOREAN_STYLE_RULES,
   "",
   "Ids:",
   '- Copy the documentId from the id attribute of the story block. Emit one output entry for every block you were given.',
@@ -52,7 +55,7 @@ const OUTPUT_SCHEMA = {
 
 export const WRITE_DIGEST_PROMPT: PromptTemplate = {
   promptId: "write-digest",
-  promptVersion: "v1",
+  promptVersion: "v2",
   system: SYSTEM,
   outputSchema: OUTPUT_SCHEMA,
   maxOutputTokens: 8000,
