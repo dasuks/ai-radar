@@ -1,13 +1,13 @@
 {
-  "name": "ai-coding-radar",
+  "name": "ai-radar",
   "version": "1.0.0",
-  "description": "AI 코딩 실무 지식을 Daily Brief로 정리하는 개인용 파이프라인",
+  "description": "AI 생태계를 관측하고 근거와 함께 저장·분석해 AI Intelligence Daily와 Obsidian 지식으로 재사용하는 개인용 AI Intelligence Platform",
   "private": true,
   "type": "module",
   "scripts": {
-    "daily": "tsx src/run-daily.ts",
-    "test": "npm run test:build && node --test .test-dist/test/briefing.test.js .test-dist/test/notion-writer.test.js .test-dist/test/obsidian-librarian.test.js",
-    "test:build": "tsc --noEmit false --outDir .test-dist --rootDir . --declaration false --declarationMap false --sourceMap false",
+    "daily": "tsx src/runtime/cli/daily.ts",
+    "test": "npm run test:build && node --test \".test-dist/test/**/*.test.js\"",
+    "test:build": "node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc --noEmit false --outDir .test-dist --rootDir . --declaration false --declarationMap false --sourceMap false",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "feeds": [
+    {
+      "id": "openai-news",
+      "name": "OpenAI News",
+      "url": "https://openai.com/news/rss.xml"
+    },
+    {
+      "id": "simon-willison",
+      "name": "Simon Willison",
+      "url": "https://simonwillison.net/atom/everything/"
+    },
+    {
+      "id": "huggingface-blog",
+      "name": "Hugging Face Blog",
+      "url": "https://huggingface.co/blog/feed.xml"
+    },
+    {
+      "id": "latent-space",
+      "name": "Latent Space",
+      "url": "https://www.latent.space/feed"
+    },
+    {
+      "id": "google-ai-blog",
+      "name": "Google AI Blog",
+      "url": "https://blog.google/technology/ai/rss/"
+    }
+  ]
+}
