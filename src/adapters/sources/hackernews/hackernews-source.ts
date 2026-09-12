@@ -13,7 +13,6 @@ import type { ContentCompleteness, RawObservation } from "../../../domain/docume
 import type { TimeWindow } from "../../../domain/shared/time.js";
 import { isWithinWindow } from "../../../domain/shared/time.js";
 import { observationId, payloadHashOf } from "../../../domain/shared/ids.js";
-import { looksAiRelated } from "./keywords.js";
 import { normalizeHackerNews } from "./normalize.js";
 import {
   HN_SOURCE_ID,
@@ -63,14 +62,29 @@ function readCheckpoint(checkpoint: SourceCheckpoint | null): HackerNewsCheckpoi
   return { lastMaxItemId: typeof value === "number" && Number.isFinite(value) ? value : null };
 }
 
+export interface HackerNewsSourceOptions {
+  /**
+   * 제목 관련성 필터. 정책은 adapter 가 아니라 Composition Root 가 정한다
+   * (`policies/classification/source-relevance.ts`). 생략하면 필터 없이 전부 받는다.
+   */
+  isRelevant?: (title: string) => boolean;
+}
+
 /**
  * Hacker News 공식 Firebase API source adapter (PIPELINES_AND_POLICIES.md §2).
  *
  * - stateless: checkpoint 는 인자로 받고 결과로 돌려준다.
  * - 네트워크는 `ctx.http` 로만 접근한다 (global fetch 금지).
  * - 외부에서 온 문자열(제목·본문)은 로그에 남기지 않는다 (INTEGRATIONS §5.1).
+ * - 관련성 정책은 주입받는다 (adapters 는 policies 를 import 하지 않는다, ARCH-06).
  */
 export class HackerNewsSource implements SourceAdapter {
+  private readonly isRelevant: (title: string) => boolean;
+
+  constructor(options: HackerNewsSourceOptions = {}) {
+    this.isRelevant = options.isRelevant ?? (() => true);
+  }
+
   readonly descriptor: SourceDescriptor = {
     id: HN_SOURCE_ID,
     kind: "API",
@@ -168,14 +182,11 @@ export class HackerNewsSource implements SourceAdapter {
       if (truncationReason === null && paginationLimited) truncationReason = "PAGINATION_LIMIT";
 
       const truncated = truncationReason !== null;
-      const status: CollectResult["status"] =
-        observations.length === 0 && errors.length > 0
-          ? "FAILED"
-          : truncated || errors.length > 0
-            ? "PARTIAL"
-            : "COMPLETE";
+      // topstories 자체의 실패는 위에서 이미 FAILED 로 돌아갔다. 여기서의 errors 는 개별 item 오류이므로
+      // 관측이 0건이어도 접근 실패가 아니다 (PIPELINES §2.2: COMPLETE + 0건 = NO_NEW_ITEMS).
+      const status: CollectResult["status"] = truncated || errors.length > 0 ? "PARTIAL" : "COMPLETE";
 
-      if (status === "FAILED") return failed(request.window, errors, itemsSeen);
+      // (FAILED 는 topstories 실패 시 위에서 이미 반환됨)
 
       log.info("hackernews collect finished", {
         status,
@@ -211,7 +222,7 @@ export class HackerNewsSource implements SourceAdapter {
     if (item.type !== undefined && item.type !== "story") return false;
     const title = item.title;
     if (!title) return false;
-    if (!looksAiRelated(title)) return false;
+    if (!this.isRelevant(title)) return false;
     const publishedAt = unixSecondsToIso(item.time);
     if (publishedAt === null) return false;
     return isWithinWindow(publishedAt, window);

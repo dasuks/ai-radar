@@ -1,5 +1,5 @@
 import { childrenNamed, deepText, findAll, firstChild, parseXml, textOf, type XmlElement } from "./xml.js";
-import { stripHtml } from "./html.js";
+import { stripHtml } from "../../shared/html.js";
 import { hashParts } from "../../../domain/shared/ids.js";
 import type { ContentCompleteness } from "../../../domain/documents/raw-observation.js";
 

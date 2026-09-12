@@ -10,6 +10,8 @@
 
 검사 항목(Phase 0 착수 전 스냅샷): `git status`(clean, `main`, 커밋 1개 `9dd3486`), `package.json`, `tsconfig.json`(strict, nodenext, TS 7.0.2), `src/`(10 파일), `test/`(3 파일, 14 테스트 통과; Phase 0 후 `architecture.test.ts` 가 추가되어 4 파일 29건), `.gitignore`, `data/daily-brief.json`, 환경변수 사용처, Obsidian Vault 실제 파일, `npm run typecheck`/`npm test` 실행.
 
+이 baseline은 Phase 1~3 구현 이전 상태다. 2026-09-12 야간 구현 이후의 실제 현황과 실행 결과는 §9 에 기록했다.
+
 ### 1.1 분류
 
 | 기능 | 분류 | 근거 |
@@ -616,3 +618,67 @@ v1 (bodySchemaVersion 없음): { date, title, summary[], topics[{id,title,type,i
 | Notion API 블록 append 원자성 대안(없음으로 가정) | 공식 문서 | Phase 1 |
 | Instagram Graph API 게시 절차·제한 | Meta 문서 + 샌드박스 | Phase 6 |
 | YouTube transcript 확보 수단(공식 Captions API는 OAuth 필요, 비공식 경로는 이용 조건 불명) | YouTube Data API 문서 + 테스트 채널로 실측, 결과를 `adapters/sources/youtube/README.md` 에 기록 | YouTube source 착수 시 |
+
+---
+
+## 9. 구현 현황 (2026-09-12 야간 구현 후)
+
+§1의 baseline은 Phase 1~3 구현 이전 스냅샷이다. 이 절은 2026-09-12 야간 단일 세션 구현이 끝난 뒤의 실제 상태, 계획과 달라진 점, 첫 실제 실행 결과를 기록한다.
+
+### 9.1 Phase별 현황
+
+| Phase | 목표 | 상태 |
+| --- | --- | --- |
+| 0 | 설계 패키지, 아키텍처 테스트 골격 | 완료 |
+| 1 | Artifact·Publish 경계, 채널 격리, 사용자 데이터 안전 | 완료 |
+| 2 | Raw Store, Storage, 첫 Source | Hacker News + RSS 수집·정규화·SQLite 저장까지 완료. Horizon adapter는 만들지 않았다 |
+| 3 | Entity·Metric·LLM·자동 Daily | 완료. 계획된 Anthropic/OpenAI 등 API provider 대신 Codex CLI provider 하나만 구현했고, Entity 해석은 GitHub repository 인식 정도의 최소 수준이다 |
+| 4 | Trend·Feedback | 착수하지 않음 |
+| 5 | Librarian v2 | 착수하지 않음 |
+| 6 | 채널 확장·공개 게시 | 착수하지 않음 |
+
+### 9.2 계획과 달라진 점 (Deviations)
+
+- Phase 1~3을 계획대로 Phase별 PR로 나누지 않고 하룻밤 세션 하나로 구현했다.
+- Migration은 SQL 파일이 아니라 TS 모듈로 작성했다(`src/adapters/storage/sqlite/migrations/0001_init.ts`).
+- ARCH-08 예외에 `src/adapters/llm/codex-cli/**` 를 추가해 codex-cli adapter의 `child_process` 사용을 허용했다.
+- Ranking 임계값을 policy v1.0.1로 0.3까지 낮췄다.
+- 수동 override 조건을 "파일이 존재하면"이 아니라 `--input` 플래그를 명시했을 때로만 한정했다.
+- `EntityMention.locatorKey` 는 locator 객체가 아니라 문자열로 구현했다.
+- `NormalizeInput` 에는 file payload가 없어서, Hacker News와 RSS 두 adapter 모두 payload를 inline으로 유지한다.
+
+### 9.3 첫 실제 실행 (2026-09-12)
+
+- 소스 6개(RSS feed 1개는 404로 이후 config에서 제거)에서 24시간 window 기준 문서 39건, cluster 39건, claim 90건(증거 검증에서 1건 거부)을 수집·생성했다.
+- Codex 호출은 6회였고, 호출당 약 25초에서 120초가 걸렸으며 1회는 240초 타임아웃 후 재시도했다.
+- CULTURE, AI_CODING, AGENT_ENGINEERING, EVALS_RELIABILITY에 걸친 item 6개짜리 Daily Brief를 만들었다.
+- Notion 페이지 "AI Intelligence Daily"를 갱신했다(revision 4). Obsidian daily note를 갱신했다. Knowledge Note 1건을 새로 만들었다.
+- Run 상태는 PARTIAL_SUCCESS였다. Hacker News 수집이 200개 story 스캔 상한에 걸려 PARTIAL을 보고했기 때문이며, 이는 정직한 coverage 보고이고 매일 나타나는 것이 예상된 정상 동작이다.
+- `npm test` 165개 테스트 통과, `npm run typecheck` 통과.
+
+### 9.4 다음 단계
+
+- Phase 4: Trend engine, DerivedSignal 계산
+- Phase 5: Librarian v2 (proposal/review 흐름)
+- Horizon adapter 추가
+- GitHub source 추가
+- RSS feed 목록 정리(curation)
+
+### 9.5 코드 리뷰(Standards/Spec 두 축)에서 나온 항목과 처리 (2026-09-12)
+
+수정 완료:
+- 조립 코드(`runtime/composition/intelligence-wiring.ts`)에 있던 비즈니스 규칙을 `policies/classification/document-priority.ts`, `policies/classification/visibility.ts(artifactVisibility)`, `application/analyze/support.ts(claimsByDocument)`, `application/briefing/{fallback-brief,artifact-envelope}.ts`, `application/collect/coverage.ts` 로 이동.
+- `ports/llm` 의 실행 코드(`escapeUntrusted`, `wrapUntrusted`, `UNTRUSTED_PREAMBLE`)를 `domain/evidence/untrusted.ts` 로 이동. ports 는 타입만 가진다.
+- HN/RSS adapter 의 중복 `html.ts` 를 `adapters/shared/html.ts` 로 통합.
+- Codex CLI adapter 는 비신뢰 prompt 를 argv 가 아니라 **stdin** 으로 전달한다 (실측: 10.8초, 정상). argv 에는 상수 플래그와 파일 경로만 남는다.
+- HN 관련성 키워드 필터를 `policies/classification/source-relevance.ts` 로 옮기고 adapter 는 predicate 를 주입받는다 (기본은 필터 없음).
+- Spec: 조용한 날(관측 0건 + 개별 item 오류)을 FAILED 로 보고하던 HN 상태 판정 수정(topstories 실패만 FAILED). 정상 실행에서 claim 0건은 ANALYSIS_FAILURE 가 아니며, fallback 본문은 "수집 실패"와 "검증 통과 항목 없음"을 다른 문장으로 쓴다. 분석 PARTIAL(예산 소진·배치 실패)은 `RunOutcomeInput.analysisPartial` 로 PARTIAL_SUCCESS 에 반영된다. Obsidian Daily Note 후보가 여럿이고 H1 로 가릴 수 없으면 임의 선택 대신 발행을 중단한다(AMBIGUOUS). 소스가 0개면 collect 단계가 실패로 기록된다.
+
+알려진 gap (다음 작업에서 처리):
+- PIPELINES §5.2(1) LLM schema 실패 시 1회 재요청 미구현 (현재 즉시 FAILED). §2.2(4) 수집 재시도는 최대 2회가 아니라 1회.
+- §6.3(6) oneMinuteSummary 문장 → claimIds 매핑 검증 미구현. §6.3(5) applyCandidates 가 PRACTICAL 항목으로 제한되지 않음.
+- §3.4 `radar.mentions`(ENTITY scope) 미기록. entity 해석은 REPOSITORY(URL) 만 결정적으로 처리.
+- §4.2 OFFICIAL_CLAIM 의 "official 채널 author" 조건은 prompt 에만 있고 코드 검증 없음.
+- `--resume <runId>` 미구현. Phase 3 표의 `AI_RADAR_AUTO_BRIEF=false` rollback 플래그 대신 `--input` 수동 override 만 있음.
+- RSS 는 checkpoint 의 seen guid 를 건너뛰므로 같은 guid 로 정정된 글은 새 observation 이 되지 않는다 (CONTRACTS §1.1 정정 규칙과 충돌). 해결: guid 뿐 아니라 (guid, updated/hash) 로 skip 판정.
+- 의도된 범위 추가: `scripts/run-daily.cmd`(스케줄러 래퍼)와 `--skip-*` 플래그는 운영 편의로 넣었고 설계 문서에는 없었다. README 에 기록.

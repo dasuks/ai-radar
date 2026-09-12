@@ -1,6 +1,5 @@
 import { artifactId as makeArtifactId } from "../../domain/shared/ids.js";
 import type { Artifact, ChannelId, PublicationRecord } from "../../domain/artifacts/artifact.js";
-import { contentHashOf } from "../../domain/artifacts/artifact.js";
 import {
   isV1Briefing,
   parseDailyBriefingV1,
@@ -19,6 +18,7 @@ import type { TimeWindow } from "../../domain/shared/time.js";
 import type { Publisher, Renderer, VaultPort } from "../../ports/publishing/index.js";
 import type { ArtifactStore } from "../../ports/storage/index.js";
 import type { Clock, EventSink, Logger } from "../../ports/system/index.js";
+import { dailyBriefArtifact } from "../briefing/artifact-envelope.js";
 import { publishArtifact } from "../publish/publish-artifact.js";
 import { runLibrarian, type LibrarianResult } from "../librarian/run-librarian.js";
 
@@ -58,6 +58,7 @@ export interface PipelineContext {
   artifact: Artifact<DailyBriefBody> | null;
   collect: RunOutcomeInput["collect"];
   analysisFailed: boolean;
+  analysisPartial: boolean;
   publications: PublicationRecord[];
   librarian: LibrarianResult | null;
   librarianFailed: boolean;
@@ -161,16 +162,8 @@ async function buildManualArtifact(
   if (body.date !== ctx.date) {
     deps.logger.warn(`manual brief is dated ${body.date}; using it instead of the requested ${ctx.date}`);
   }
-  return {
-    schemaVersion: 1,
-    id: makeArtifactId("DAILY_BRIEF", body.date),
-    type: "DAILY_BRIEF",
-    targetKey: body.date,
-    revision: 0,
-    contentHash: contentHashOf(body),
-    status: "FINAL",
-    timezone: ctx.timezone,
-    window: ctx.window,
+  return dailyBriefArtifact({
+    date: body.date,
     body,
     inputs: {
       claimIds: [],
@@ -180,8 +173,10 @@ async function buildManualArtifact(
       runId: ctx.runId,
     },
     visibility: "PRIVATE",
+    timezone: ctx.timezone,
+    window: ctx.window,
     createdAt: deps.clock.nowIso(),
-  };
+  });
 }
 
 /** 채널 발행 단계. 한 채널의 실패가 다른 채널을 막지 않는다 (R-P1). */
@@ -291,6 +286,7 @@ export async function runDailyPipeline(
     artifact: null,
     collect: deps.source.kind === "manual" ? "SKIPPED" : "ALL_OK",
     analysisFailed: false,
+    analysisPartial: false,
     publications: [],
     librarian: null,
     librarianFailed: false,
@@ -332,6 +328,7 @@ export async function runDailyPipeline(
     : decideRunStatus({
         collect: ctx.collect,
         analysisFailed: ctx.analysisFailed,
+        analysisPartial: ctx.analysisPartial,
         artifactCreated: ctx.artifact !== null,
         channelsAttempted,
         channelsFailed,

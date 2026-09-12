@@ -1,5 +1,6 @@
 import { Client, type BlockObjectRequest, type CreatePageParameters } from "@notionhq/client";
 import type { ChannelId } from "../../domain/artifacts/artifact.js";
+import { isRecord } from "../../domain/shared/validation.js";
 import type { PublishOutcome, Publisher, Rendered } from "../../ports/publishing/index.js";
 import type { Logger } from "../../ports/system/index.js";
 
@@ -35,10 +36,6 @@ export interface NotionPublisherOptions {
   allowSchemaFallback: boolean;
   client?: NotionClient;
   logger?: Logger;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizeId(value: string): string {

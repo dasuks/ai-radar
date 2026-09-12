@@ -36,6 +36,9 @@ interface SpawnCall {
   command: string;
   args: string[];
   options: CodexSpawnOptions;
+  /** stdin 으로 흘러들어온 내용 (prompt 는 인자가 아니라 stdin 으로 간다). */
+  stdin: string;
+  stdinEnded: boolean;
 }
 
 interface StubOptions {
@@ -52,7 +55,8 @@ function stubSpawn(calls: SpawnCall[], options: StubOptions = {}): SpawnCodex {
   return (command, args, spawnOptions) => {
     const index = attempt;
     attempt += 1;
-    calls.push({ command, args, options: spawnOptions });
+    const call: SpawnCall = { command, args, options: spawnOptions, stdin: "", stdinEnded: false };
+    calls.push(call);
     const dataHandlers: ((chunk: unknown) => void)[] = [];
     const closeHandlers: ((code: number | null) => void)[] = [];
     let closed = false;
@@ -62,6 +66,19 @@ function stubSpawn(calls: SpawnCall[], options: StubOptions = {}): SpawnCodex {
       for (const handler of closeHandlers) handler(code);
     };
     const child: CodexProcess = {
+      stdin: {
+        write(chunk) {
+          call.stdin += chunk;
+          return true;
+        },
+        end() {
+          call.stdinEnded = true;
+          return undefined;
+        },
+        on() {
+          return undefined;
+        },
+      },
       stdout: {
         on(_event, listener) {
           dataHandlers.push(listener);
@@ -107,25 +124,24 @@ async function withWorkDir<T>(fn: (workDir: string) => Promise<T>): Promise<T> {
 }
 
 describe("buildCodexArgs", () => {
-  test("codex exec 인자를 만들고 prompt 를 마지막 positional 로 둔다", () => {
+  test("codex exec 인자는 코드 상수와 파일 경로뿐이다 (positional prompt 없음)", () => {
     const args = buildCodexArgs({
       workDir: "C:/work",
       schemaPath: "C:/work/.codex-tmp/x/schema.json",
       outPath: "C:/work/.codex-tmp/x/out.json",
       model: "gpt-5.6-sol",
-      prompt: "PROMPT",
     });
     assert.deepEqual(args.slice(0, 6), ["exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "-C"]);
     assert.equal(args[6], "C:/work");
     assert.equal(args[args.indexOf("--output-schema") + 1], "C:/work/.codex-tmp/x/schema.json");
     assert.equal(args[args.indexOf("-o") + 1], "C:/work/.codex-tmp/x/out.json");
-    assert.deepEqual(args.slice(-3), ["-m", "gpt-5.6-sol", "PROMPT"]);
+    assert.deepEqual(args.slice(-2), ["-m", "gpt-5.6-sol"]);
   });
 
   test("model 이 default 면 -m 을 넣지 않는다", () => {
-    const args = buildCodexArgs({ workDir: ".", schemaPath: "s", outPath: "o", model: "default", prompt: "P" });
+    const args = buildCodexArgs({ workDir: ".", schemaPath: "s", outPath: "o", model: "default" });
     assert.equal(args.includes("-m"), false);
-    assert.equal(args.at(-1), "P");
+    assert.equal(args.at(-1), "o");
   });
 
   test("cheap tier 는 model_reasoning_effort 설정을 붙인다", () => {
@@ -134,7 +150,6 @@ describe("buildCodexArgs", () => {
       schemaPath: "s",
       outPath: "o",
       model: "default",
-      prompt: "P",
       reasoningEffort: "low",
     });
     assert.equal(args[args.indexOf("-c") + 1], 'model_reasoning_effort="low"');
@@ -198,7 +213,7 @@ describe("parseCodexHeader", () => {
 });
 
 describe("CodexCliProvider.complete", () => {
-  test("stdin 을 닫고 실행한 뒤 -o 파일을 JSON 으로 돌려준다", async () => {
+  test("prompt 를 stdin 으로 보내고 닫은 뒤 -o 파일을 JSON 으로 돌려준다", async () => {
     await withWorkDir(async (workDir) => {
       const calls: SpawnCall[] = [];
       const provider = new CodexCliProvider({
@@ -217,9 +232,14 @@ describe("CodexCliProvider.complete", () => {
       const call = calls[0];
       assert.ok(call);
       assert.equal(call.command, "codex");
-      assert.deepEqual(call.options.stdio, ["ignore", "pipe", "pipe"]);
+      assert.deepEqual(call.options.stdio, ["pipe", "pipe", "pipe"]);
       assert.equal(call.options.shell, false);
       assert.equal(call.options.cwd, workDir);
+      // 비신뢰 텍스트는 stdin 으로만 간다. argv 에는 흔적이 없어야 한다.
+      assert.equal(call.stdin, buildPrompt(request()));
+      assert.equal(call.stdinEnded, true);
+      assert.ok(call.stdin.includes('<document id="doc_1">'));
+      for (const arg of call.args) assert.equal(arg.includes("doc_1"), false);
       // schema 파일은 workDir 아래 임시 디렉터리에 쓰고 끝나면 지운다.
       assert.ok(call.args[call.args.indexOf("--output-schema") + 1]?.includes(".codex-tmp"));
       assert.deepEqual(await readdir(path.join(workDir, ".codex-tmp")), []);

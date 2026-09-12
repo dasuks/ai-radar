@@ -3,7 +3,7 @@
  * PIPELINES_AND_POLICIES.md §3.1: 본문 변환에 LLM을 쓰지 않는다.
  *
  * adapters/<a> 는 다른 adapter 디렉터리를 import 하지 않으므로 (AGENTS.md §3)
- * 이 작은 유틸은 소스 adapter 별로 각자 가진다.
+ * 공통 유틸은 adapters/shared/ 에 둔다 (외부 SDK 미포함).
  */
 
 const NAMED_ENTITIES: Record<string, string> = {

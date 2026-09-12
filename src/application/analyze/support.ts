@@ -1,10 +1,12 @@
 /** analyze Use Case 공용 순수 헬퍼. */
 import type { NormalizedDocument } from "../../domain/documents/normalized-document.js";
 import type { AnalysisTask } from "../../domain/evidence/analysis.js";
+import type { Claim } from "../../domain/evidence/claim.js";
 import type { Provenance } from "../../domain/evidence/provenance.js";
 import { hashParts } from "../../domain/shared/ids.js";
 import type { LlmResponse } from "../../ports/llm/llm-provider.js";
 import type { AnalyzeUsageEntry } from "./analyze-summary.js";
+import type { ExtractClaimsResult } from "./extract-claims.js";
 
 export function chunk<T>(items: readonly T[], size: number): T[][] {
   const out: T[][] = [];
@@ -104,4 +106,25 @@ export function isRecordValue(value: unknown): value is Record<string, unknown> 
 
 export function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+/**
+ * ExtractClaims 결과를 documentId → Claim[] 로 뒤집는다.
+ *
+ * 한 claim 은 (a) 그 문서에서 확정된 subject entity 를 가졌거나
+ * (b) 그 문서의 evidence 를 인용했을 때 해당 문서에 붙는다.
+ */
+export function claimsByDocument(result: ExtractClaimsResult): Record<string, Claim[]> {
+  const byDocument: Record<string, Claim[]> = {};
+  for (const claim of result.claims) {
+    const documentIds = new Set<string>();
+    for (const [documentId, entityIds] of Object.entries(result.entityIdsByDocument)) {
+      if (entityIds.some((id) => claim.subjectEntityIds.includes(id))) documentIds.add(documentId);
+    }
+    const evidenceDocuments = result.evidence
+      .filter((item) => claim.evidenceIds.includes(item.id))
+      .map((item) => item.documentId);
+    for (const documentId of [...documentIds, ...evidenceDocuments]) (byDocument[documentId] ??= []).push(claim);
+  }
+  return byDocument;
 }

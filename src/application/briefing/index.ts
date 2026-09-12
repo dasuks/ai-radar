@@ -15,3 +15,5 @@ export {
   type WrittenItem,
   type WrittenOutput,
 } from "./build-daily-brief.js";
+export { dailyBriefArtifact, type DailyBriefArtifactInput } from "./artifact-envelope.js";
+export { buildUnverifiedBrief, type UnverifiedBriefInput } from "./fallback-brief.js";

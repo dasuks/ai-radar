@@ -4,9 +4,16 @@
  * INTEGRATIONS_AND_SAFETY.md §3: 자격증명은 생성자 인자, 로그에는 provider/model 만,
  * prompt 본문(비신뢰 데이터)은 로그에 남기지 않는다. tool calling 은 언제나 비활성.
  *
+ * 비신뢰 텍스트(문서 본문)는 **인자로 넘기지 않는다**. argv 에는 코드 상수 플래그와 우리가 만든
+ * 파일 경로만 들어가고, prompt 전체는 stdin 으로 흘려보낸 뒤 stdin 을 닫는다.
+ * VERIFIED (Codex CLI 0.154.0, Windows): positional prompt 를 생략하면 codex 는
+ * `Reading prompt from stdin...` 을 찍고 stdin 을 끝까지 읽는다. 확인 명령:
+ * `cat prompt.txt | codex exec -s read-only --ephemeral --skip-git-repo-check -C <dir> --output-schema schema.json -o out.json`
+ * → exit 0, out.json 생성, 약 10.8초, stdout/stderr 모두 멈추지 않음.
+ *
  * UNVERIFIED EXTERNAL CONSTRAINT: `codex exec` 의 stdout 헤더 형식(model/tokens used)은
  * Codex CLI 0.154.0 기준이며 버전이 올라가면 usage 파싱이 0 으로 떨어질 수 있다(치명적이지 않음).
- * 확인 방법: `codex exec -s read-only --ephemeral --skip-git-repo-check -C . -o out.json "ping"` 의 stdout.
+ * 확인 방법: 위 명령의 stderr 헤더.
  *
  * ARCH-08: `node:child_process` 는 이 adapter 와 horizon adapter 에서만 import 한다.
  * 테스트는 `spawnImpl` 로 stub 을 주입한다. `binary` 가 `.js` 로 끝나면 `process.execPath <binary>` 로 실행한다.
@@ -15,13 +22,12 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import {
-  UNTRUSTED_PREAMBLE,
-  wrapUntrusted,
-  type LlmCapabilities,
-  type LlmProvider,
-  type LlmRequest,
-  type LlmResponse,
+import { UNTRUSTED_PREAMBLE, wrapUntrusted } from "../../../domain/evidence/untrusted.js";
+import type {
+  LlmCapabilities,
+  LlmProvider,
+  LlmRequest,
+  LlmResponse,
 } from "../../../ports/llm/llm-provider.js";
 import type { Logger } from "../../../ports/system/index.js";
 
@@ -31,7 +37,15 @@ export interface CodexStream {
   setEncoding?(encoding: string): unknown;
 }
 
+/** child.stdin 중 우리가 쓰는 부분. prompt 를 흘려보내고 닫는 용도로만 쓴다. */
+export interface CodexWritable {
+  write(chunk: string, encoding?: string, callback?: (error?: Error | null) => void): unknown;
+  end(callback?: () => void): unknown;
+  on(event: "error", listener: (error: Error) => void): unknown;
+}
+
 export interface CodexProcess {
+  readonly stdin: CodexWritable | null;
   readonly stdout: CodexStream | null;
   readonly stderr: CodexStream | null;
   on(event: "error", listener: (error: Error) => void): unknown;
@@ -41,7 +55,8 @@ export interface CodexProcess {
 
 export interface CodexSpawnOptions {
   cwd: string;
-  stdio: ["ignore", "pipe", "pipe"];
+  /** prompt(비신뢰 텍스트)를 stdin 으로 보내야 하므로 stdin 도 pipe 다. 쓰고 나면 즉시 닫는다. */
+  stdio: ["pipe", "pipe", "pipe"];
   shell: false;
   windowsHide: boolean;
 }
@@ -86,12 +101,14 @@ export interface CodexArgsInput {
   schemaPath: string;
   outPath: string;
   model: string;
-  prompt: string;
   extraArgs?: string[];
   reasoningEffort?: string | undefined;
 }
 
-/** `codex exec` 인자 조립 (순수 함수, 테스트 대상). prompt 는 마지막 positional. */
+/**
+ * `codex exec` 인자 조립 (순수 함수, 테스트 대상).
+ * argv 에는 코드 상수와 우리가 만든 파일 경로만 들어간다. prompt(비신뢰 텍스트)는 stdin 으로 간다.
+ */
 export function buildCodexArgs(input: CodexArgsInput): string[] {
   const args = [
     "exec",
@@ -109,7 +126,6 @@ export function buildCodexArgs(input: CodexArgsInput): string[] {
   if (input.model && input.model !== "default") args.push("-m", input.model);
   if (input.reasoningEffort) args.push("-c", `model_reasoning_effort="${input.reasoningEffort}"`);
   for (const extra of input.extraArgs ?? []) args.push(extra);
-  args.push(input.prompt);
   return args;
 }
 
@@ -225,10 +241,10 @@ export class CodexCliProvider implements LlmProvider {
           schemaPath,
           outPath,
           model,
-          prompt,
           extraArgs: this.extraArgs,
           reasoningEffort: this.reasoningEffort,
         }),
+        prompt,
         signal,
       );
       if (
@@ -246,10 +262,10 @@ export class CodexCliProvider implements LlmProvider {
             schemaPath,
             outPath,
             model,
-            prompt,
             extraArgs: this.extraArgs,
             reasoningEffort: undefined,
           }),
+          prompt,
           signal,
         );
       }
@@ -310,7 +326,7 @@ export class CodexCliProvider implements LlmProvider {
     }
   }
 
-  private runCodex(args: string[], signal: AbortSignal): Promise<RunResult> {
+  private runCodex(args: string[], prompt: string, signal: AbortSignal): Promise<RunResult> {
     return new Promise<RunResult>((resolve) => {
       let stdout = "";
       let stderr = "";
@@ -324,8 +340,8 @@ export class CodexCliProvider implements LlmProvider {
         : { command: this.binary, args };
       const child = this.spawnImpl(launch.command, launch.args, {
         cwd: this.workDir,
-        // stdin 을 닫아야 codex 가 입력을 기다리며 멈추지 않는다.
-        stdio: ["ignore", "pipe", "pipe"],
+        // prompt 는 stdin 으로 보낸다 (인자로 넘기지 않는다). 다 쓰면 곧바로 닫아 codex 가 멈추지 않게 한다.
+        stdio: ["pipe", "pipe", "pipe"],
         shell: false,
         windowsHide: true,
       });
@@ -357,6 +373,14 @@ export class CodexCliProvider implements LlmProvider {
       child.on("close", (code) => {
         finish(code);
       });
+
+      // prompt 는 argv 가 아니라 stdin 으로 흘려보낸다. EPIPE 는 close/error 가 이미 처리한다.
+      const stdin = child.stdin;
+      if (stdin) {
+        stdin.on("error", () => undefined);
+        stdin.write(prompt, "utf8");
+        stdin.end();
+      }
 
       timer = setTimeout(() => {
         timedOut = true;

@@ -3,7 +3,7 @@
  * 기본은 PRIVATE. 공개 공식/블로그 호스트에서 나온 FACT/OFFICIAL_CLAIM 만 PUBLIC_OK 다.
  * 순수 함수만 둔다 (policies 계층).
  */
-import type { ClaimType, Visibility } from "../../domain/evidence/claim.js";
+import type { Claim, ClaimType, Visibility } from "../../domain/evidence/claim.js";
 
 export const VISIBILITY_POLICY_ID = "classification.visibility";
 export const VISIBILITY_POLICY_VERSION = "1.0.0";
@@ -80,4 +80,12 @@ export function decideVisibilityWithReason(input: VisibilityInput): VisibilityDe
 
 export function decideVisibility(input: VisibilityInput): Visibility {
   return decideVisibilityWithReason(input).visibility;
+}
+
+/**
+ * Artifact 한 건의 visibility. AND 규칙: claim 이 하나라도 있고 전부 PUBLIC_OK 일 때만 PUBLIC_OK,
+ * 그 밖에는(비어 있는 경우 포함) PRIVATE (INTEGRATIONS_AND_SAFETY.md §6.2).
+ */
+export function artifactVisibility(claims: readonly Claim[]): Visibility {
+  return claims.length > 0 && claims.every((claim) => claim.visibility === "PUBLIC_OK") ? "PUBLIC_OK" : "PRIVATE";
 }

@@ -110,7 +110,7 @@ Microservices, Kafka, Kubernetes, service mesh, DI framework, runtime plugin mar
 - **Provider 고유 타입 누출 금지.** `ports/` 시그니처에 `@notionhq/client`의 `BlockObjectRequest`, Anthropic의 `Message` 같은 타입이 나타나면 위반이다.
 - **Horizon 타입 누출 금지.** Horizon의 출력 JSON 형태는 `adapters/horizon/` 안에서만 존재한다. Core는 `RawObservation`만 안다.
 - **`process.env` 접근 지점은 `runtime/config`** 하나다. 다른 모든 모듈은 값을 인자로 받는다.
-- **프로세스 실행(`node:child_process`)은 `adapters/sources/horizon/` 과 `adapters/llm/codex-cli/` 두 곳에서만** 허용한다. 두 adapter 모두 고정 명령과 코드 상수 인자만 쓰고, 외부 데이터는 stdin 을 닫은 채 파일·인자 텍스트(셸 해석 없음, `shell:false`)로만 전달한다.
+- **프로세스 실행(`node:child_process`)은 `adapters/sources/horizon/` 과 `adapters/llm/codex-cli/` 두 곳에서만** 허용한다. 두 adapter 모두 고정 명령과 코드 상수 인자만 쓴다(셸 해석 없음, `shell:false`). 외부(비신뢰) 텍스트는 **인자(argv)에 넣지 않고 stdin 또는 우리가 만든 임시 파일로만** 전달하며, stdin 은 다 쓰는 즉시 닫는다. argv 에는 코드 상수 플래그와 우리가 만든 파일 경로만 들어간다.
 
 이 규칙은 `test/architecture.test.ts` 가 import 스캔으로 강제한다 (`MIGRATION_AND_ACCEPTANCE.md` §7).
 

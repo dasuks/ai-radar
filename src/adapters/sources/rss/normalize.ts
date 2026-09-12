@@ -2,7 +2,7 @@ import type { NormalizeInput } from "../../../ports/sources/source-adapter.js";
 import type { NormalizedDocument } from "../../../domain/documents/normalized-document.js";
 import { canonicalUrl } from "../../../domain/documents/normalized-document.js";
 import { documentId } from "../../../domain/shared/ids.js";
-import { extractHrefs, stripHtml } from "./html.js";
+import { extractHrefs, stripHtml } from "../../shared/html.js";
 import type { RssFeedItem } from "./feed.js";
 
 export const RSS_NORMALIZER_VERSION = "rss@1";

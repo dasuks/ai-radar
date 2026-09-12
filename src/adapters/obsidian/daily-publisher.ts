@@ -6,6 +6,7 @@ import {
   replaceRegion,
   wrapRegion,
 } from "../../domain/shared/markers.js";
+import { isRecord } from "../../domain/shared/validation.js";
 import type { PublishOutcome, Publisher, Rendered, VaultPort } from "../../ports/publishing/index.js";
 import type { Logger } from "../../ports/system/index.js";
 
@@ -15,10 +16,6 @@ interface MarkdownDailyPayload {
   markdown: string;
   date: string;
   title: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function payloadOf(rendered: Rendered): MarkdownDailyPayload {
@@ -139,11 +136,9 @@ export class ObsidianDailyPublisher implements Publisher {
         return candidate;
       }
     }
-    const newest = [...candidates].sort().reverse()[0] ?? null;
-    this.options.logger?.warn(`multiple daily notes for ${date} and no matching H1; using the newest by name`, {
-      candidates,
-      chosen: newest,
-    });
-    return newest;
+    // INTEGRATIONS §2.3(4): 후보가 여럿이고 H1 로도 못 가리면 AMBIGUOUS. 사용자 노트를 잘못 덮어쓰지 않도록 중단한다.
+    throw new Error(
+      `multiple daily notes for ${date} and none has the expected H1; resolve duplicates before continuing: ${candidates.join(", ")}`,
+    );
   }
 }

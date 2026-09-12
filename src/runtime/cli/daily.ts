@@ -26,6 +26,12 @@ const FAILING_STATUSES: ReadonlySet<RunStatus> = new Set<RunStatus>([
   "ABORTED",
 ]);
 
+/**
+ * 마지막으로 로드된 설정의 redaction 목록. main() 밖(최상위 rejection 핸들러)에서도
+ * 비밀값이 그대로 찍히지 않도록 보관한다 (INTEGRATIONS_AND_SAFETY.md §5.1).
+ */
+let activeRedaction: string[] = [];
+
 export interface DailyCliArgs {
   date: string | null;
   input: string | null;
@@ -104,6 +110,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   try {
     const config = loadConfig(undefined, { requireNotion: !args.skipNotion });
     redaction = config.redaction;
+    activeRedaction = redaction;
     const pipeline = buildDailyPipeline(config);
     const result = await pipeline.run({
       ...(args.date ? { date: args.date } : {}),
@@ -164,7 +171,8 @@ if (invokedDirectly) {
       process.exitCode = code;
     },
     (error: unknown) => {
-      console.error(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(redactText(message, activeRedaction));
       process.exitCode = 1;
     },
   );

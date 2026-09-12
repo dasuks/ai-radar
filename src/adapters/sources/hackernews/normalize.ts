@@ -6,7 +6,7 @@ import type {
 } from "../../../domain/documents/normalized-document.js";
 import { canonicalUrl } from "../../../domain/documents/normalized-document.js";
 import { documentId } from "../../../domain/shared/ids.js";
-import { extractHrefs, stripHtml } from "./html.js";
+import { extractHrefs, stripHtml } from "../../shared/html.js";
 import {
   HN_NORMALIZER_VERSION,
   hnDiscussionUrl,

@@ -24,6 +24,7 @@ import { FetchHttpClient } from "../../adapters/system/http-client.js";
 import type { SourceAdapter } from "../../ports/sources/source-adapter.js";
 import type { LlmProvider } from "../../ports/llm/llm-provider.js";
 import type { Stores } from "../../ports/storage/index.js";
+import { looksAiRelated } from "../../policies/classification/source-relevance.js";
 import { buildIntelligenceWiring } from "./intelligence-wiring.js";
 import { ConsoleLogger } from "../../adapters/system/logger.js";
 import { LogEventSink } from "../../adapters/system/event-sink.js";
@@ -88,7 +89,7 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
   const sources: SourceAdapter[] =
     overrides.sources ??
     [
-      ...(config.sources.hackerNews.enabled ? [new HackerNewsSource()] : []),
+      ...(config.sources.hackerNews.enabled ? [new HackerNewsSource({ isRelevant: looksAiRelated })] : []),
       ...createRssSources(config.sources.rssFeeds.map(({ id, name, url }) => ({ id, name, url }))),
     ];
   const llm: LlmProvider =

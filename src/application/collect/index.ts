@@ -10,3 +10,4 @@ export {
   type SourceCoverage,
   type SourceRunStatus,
 } from "./collect-sources.js";
+export { runCoverageSummary } from "./coverage.js";

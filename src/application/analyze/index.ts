@@ -33,3 +33,4 @@ export {
   type TextSpan,
 } from "./evidence-builder.js";
 export { CLASSIFY_POLICY_VERSION, CLASSIFY_PROMPT, EXTRACT_CLAIMS_PROMPT, WRITE_BRIEF_KO_PROMPT } from "./prompts/index.js";
+export { claimsByDocument } from "./support.js";

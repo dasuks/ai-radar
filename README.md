@@ -8,54 +8,64 @@ AI/LLM/AI Coding 생태계를 지속적으로 관측하고, 수집된 사실과 
 
 ## 현재 구현 범위
 
-현재 코드는 목표 아키텍처의 **Phase 1(Artifact·Publish 경계와 사용자 데이터 안전)** 까지 구현되어 있습니다. 동작하는 경로는 다음과 같습니다.
+현재 코드는 목표 아키텍처의 **Phase 0부터 Phase 3까지** 구현되어 있고, `npm run daily` 하나로 수집부터 발행까지 전체 파이프라인이 자동으로 동작합니다. 2026-09-12 야간에 첫 자동 실행이 성공했습니다. 세부 수치와 Phase별 현황표는 `docs/architecture/MIGRATION_AND_ACCEPTANCE.md` §9 를 참고하세요. 파이프라인 순서는 다음과 같습니다.
 
-1. 수동으로 작성한 Daily Brief JSON(`--input`)을 읽어 v1 이면 `DailyBriefBody` v2 로 upcast 하고, `Artifact<DailyBriefBody>` 로 저장합니다(revision, contentHash, visibility PRIVATE).
-2. 같은 Artifact 를 Notion 과 Obsidian 두 채널로 발행합니다. 채널은 서로 격리되어 있어 한쪽이 실패해도 다른 쪽과 Librarian 은 계속 진행합니다. 발행 결과는 `PublicationRecord` 로 남고, 같은 revision 이 이미 성공했으면 다시 발행하지 않습니다.
-3. Notion 은 `Date` 로 기존 페이지를 찾아 없으면 생성하고 있으면 갱신합니다. 갱신 요청에는 `Read` 와 `Applied` 를 넣지 않습니다. 본문 맨 앞에는 `ai-radar:revision:<n>` callout 을 넣어 부분 실패를 사람이 식별할 수 있게 합니다.
-4. Obsidian Daily Note 는 날짜 접두로 찾고, `ai-radar:daily` 관리 영역만 교체합니다. 관리 영역 밖 사용자 텍스트는 건드리지 않습니다.
-5. Deterministic Librarian 이 `knowledgeType` 이 있고 중요도 4 이상인 item 을 Knowledge Note 로 만들거나 갱신하고, 날짜별 Evidence 블록과 Daily Note 의 `Knowledge Updates` 양방향 링크를 관리합니다.
-6. 실행 하나가 하나의 `Run` 이며 단계마다 `data/store/runs/` 에 기록됩니다. Run 상태는 `PIPELINES_AND_POLICIES.md` §4 의 판정식을 따릅니다.
+1. **Collect**: Hacker News Firebase API 와 `config/sources.json` 에 등록된 RSS/Atom 피드를 수집해 `RawObservation` 으로 저장합니다. 소스별 checkpoint 를 남겨 idempotent 하게 재실행할 수 있습니다.
+2. **Normalize / Link / Metrics**: 원문을 `NormalizedDocument` 로 정규화하고, 같은 문서를 가리키는 문서 간 링크를 만들고, 소스가 준 수치를 `MetricObservation` 으로 기록합니다.
+3. **Analyze**: Codex CLI(`codex exec`)를 read-only sandbox, JSON schema 출력, `stdin` 을 닫은 상태로 호출해 classification 과 claim/evidence 를 뽑습니다. 사용자의 ChatGPT 구독으로 인증하며 별도 API 키가 필요 없습니다.
+4. **BuildDailyBrief**: CULTURE·PRACTICAL ranking 정책 v1.0.1(threshold 0.3)로 item 을 뽑아 `DailyBriefBody` v2 `Artifact` 를 만듭니다(revision, contentHash, visibility PRIVATE).
+5. **Publish**: 같은 Artifact 를 Notion(`Date` 기준 upsert, `Read`/`Applied` 보존, `ai-radar:revision:<n>` callout)과 Obsidian(날짜 접두로 Daily Note 를 찾고 `ai-radar:daily` 관리 영역만 교체)에 발행합니다. 두 채널은 서로 격리되어 있어 한쪽이 실패해도 다른 쪽과 Librarian 은 계속 진행합니다(Run 상태는 `PARTIAL_SUCCESS`).
+6. **Librarian**: Deterministic Librarian 이 `knowledgeType` 이 있고 중요도 4 이상인 item 을 Knowledge Note 로 만들거나 갱신하고(한 Run 최대 20건), 날짜별 Evidence 블록과 Daily Note 의 `Knowledge Updates` 양방향 링크를 관리합니다.
 
-소스 수집, LLM 호출, Entity/Metric/Trend, 승인·공개 게시는 아직 Daily 경로에 연결되어 있지 않습니다. 각 기능의 도입 Phase는 `docs/architecture/MIGRATION_AND_ACCEPTANCE.md` §4 에 있습니다.
+실행 하나가 하나의 `Run` 이며 SQLite `runs` 테이블에 단계마다 기록됩니다. Run 상태는 `PIPELINES_AND_POLICIES.md` §4 의 판정식을 따릅니다. 수동으로 작성한 Daily Brief JSON을 `--input` 으로 지정하면 위 Collect/Analyze/BuildDailyBrief 자동 경로 대신 그 파일을 사용합니다(v1 이면 v2 로 upcast).
+
+Entity 해석은 아직 GitHub repository URL 인식 정도의 최소 수준이고(그 외 surface form 은 UNRESOLVED mention 으로 저장), Trend 계산(DerivedSignal), Librarian v2(proposal/review), 승인 기반 공개 채널 발행은 아직 구현되어 있지 않습니다. 아래 "알려진 한계" 절과 `docs/architecture/MIGRATION_AND_ACCEPTANCE.md` §9 를 참고하세요.
 
 ## 폴더 구조 (현재)
 
 ```text
 src/
-  domain/        Canonical 계약과 순수 규칙 (Artifact, DailyBriefBody v2, Run, 마커, ID/hash)
+  domain/        Canonical 계약과 순수 규칙
+    artifacts/     Artifact, DailyBriefBody v1/v2 + upcast
+    documents/      RawObservation, NormalizedDocument
+    entities/        Entity (GitHub repository 최소 해석)
+    evidence/        Claim, Evidence, Analysis, Provenance
+    metrics/         MetricObservation, DerivedSignal (계약만, 계산은 Phase 4)
+    runs/            Run
+    shared/          ids, hash, markers, time, validation
   policies/      Ranking / Classification 정책 (순수 함수)
+    culture/, practical/   CULTURE·PRACTICAL ranking 정책 v1.0.1
+    classification/        visibility 정책
   application/   Use Case
-    publish/     PublishArtifact (승인·idempotency·사용자 필드 보존)
-    librarian/   RunLibrarian (Knowledge Note 생성·갱신, Evidence, 양방향 링크)
-    runs/        RunDailyPipeline (단계 orchestration, 채널 실패 격리, Run 상태 판정)
+    collect/       CollectSources (HN·RSS 수집, checkpoint, idempotency)
+    normalize/      normalize / link-and-dedupe / record-metrics
+    analyze/        classify-documents, extract-claims, evidence-builder, analyze-summary, prompts/
+    briefing/       BuildDailyBrief
+    publish/        PublishArtifact (idempotency·사용자 필드 보존)
+    librarian/      RunLibrarian (Knowledge Note 생성·갱신, Evidence, 양방향 링크)
+    runs/           RunDailyPipeline (단계 orchestration, 채널 실패 격리, Run 상태 판정)
   ports/         Application 이 요구하는 interface (storage, publishing, sources, llm, system)
   adapters/      Port 구현
-    notion/      NotionPublisher (Date 기준 upsert, Read/Applied 보존)
-    obsidian/    ObsidianVault(VaultPort), ObsidianDailyPublisher (관리 영역만 교체)
-    rendering/   markdown/ (Daily Note 본문), notion-blocks/ (Notion 블록)
-    storage/     json-files/ (Artifact·Run 기록), fs/, memory/, sqlite/
-    sources/     hackernews/, rss/
-    system/      SystemClock, ConsoleLogger, FetchHttpClient, LogEventSink, NodeRandom
+    sources/       hackernews/, rss/
+    llm/            codex-cli/ (Codex CLI provider, `child_process` 허용 예외), fake/ (테스트용)
+    notion/         NotionPublisher (Date 기준 upsert, Read/Applied 보존)
+    obsidian/       ObsidianVault(VaultPort), ObsidianDailyPublisher (관리 영역만 교체)
+    rendering/      markdown/ (Daily Note 본문), notion-blocks/ (Notion 블록)
+    storage/        sqlite/ (migrations, 기본 저장소), fs/ (raw·artifact 파일), json-files/, memory/ (테스트용)
+    system/         SystemClock, ConsoleLogger, FetchHttpClient, LogEventSink, NodeRandom
   runtime/
-    config/      env + config/sources.json -> AppConfig (유일한 process.env 접근 지점)
-    composition/ buildDailyPipeline (조립)
-    runs/        Run lifecycle 기록 (단계마다 flush)
-    cli/daily.ts `npm run daily` 진입점
+    config/       env + config/sources.json -> AppConfig (유일한 process.env 접근 지점)
+    composition/  buildDailyPipeline (조립)
+    runs/         Run lifecycle 기록 (단계마다 flush)
+    cli/daily.ts  `npm run daily` 진입점
 config/
-  sources.json   RSS/Atom 피드 목록
+  sources.json   RSS/Atom 피드 목록 (id, name, url)
+scripts/
+  run-daily.cmd  Windows Task Scheduler 진입점 (로그를 data/store/logs/ 에 남김)
 data/
   input/daily-brief.sample.json  수동 입력 예시 (--input 으로만 사용)
-  store/         Run·Artifact·Publication 기록 (gitignore)
-test/
-  daily-brief-input.test.ts      v1 파싱 + v2 upcast
-  markdown-renderer.test.ts      Daily Note Markdown 렌더
-  notion-publisher.test.ts       Notion upsert (fake client)
-  obsidian-daily-publisher.test.ts  Daily Note 관리 영역
-  librarian.test.ts              Knowledge Note / Evidence / 레거시 마커
-  publish-artifact.test.ts       발행 Use Case
-  run-daily-pipeline.test.ts     채널 실패 격리와 Run 상태
-  architecture.test.ts           계층 의존성 규칙
+  store/         SQLite DB(ai-radar.sqlite), raw/artifact 파일, 로그 (gitignore)
+test/            application/adapters 계약 테스트 26개 파일, architecture.test.ts 포함
 docs/
   architecture/                목표 아키텍처, 계약, 파이프라인, 안전, 이행 계획
   adr/                         Architecture Decision Records
@@ -63,27 +73,62 @@ docs/
 
 ## 실행 방법
 
-Node.js 24 이상이 필요합니다 (Phase 2부터 내장 `node:sqlite` 를 사용합니다).
+Node.js 24 이상이 필요합니다 (내장 `node:sqlite` 를 사용합니다).
 
 ```powershell
 npm install
-npm run daily -- --input data/input/daily-brief.sample.json
+npm run daily
 ```
 
-`npm run daily` 는 `src/runtime/cli/daily.ts` 를 실행합니다. 플래그는 다음과 같습니다.
+플래그 없이 실행하면 오늘 날짜(설정 timezone 기준)로 Collect → Normalize/Link/Metrics → Analyze(Codex) → BuildDailyBrief → Publish(Notion·Obsidian) → Librarian 전체가 자동으로 돌아갑니다. `npm run daily` 는 `src/runtime/cli/daily.ts` 를 실행합니다. 플래그는 다음과 같습니다.
 
 | 플래그 | 뜻 |
 | --- | --- |
 | `--date YYYY-MM-DD` | 대상 날짜. 기본값은 설정 timezone(`AI_RADAR_TIMEZONE`, 기본 `Asia/Seoul`) 기준 오늘 |
-| `--input <file>` | 수동 Daily Brief JSON. v1(`topics[]`) 과 v2(`bodySchemaVersion: 2`) 를 모두 받습니다 |
-| `--dry-run` | 아무것도 쓰지 않습니다. Notion 쓰기는 건너뛰고 Obsidian 변경은 diff 로만 출력합니다 |
+| `--input <file>` | 수동 Daily Brief JSON 으로 자동 Collect/Analyze/BuildDailyBrief 경로를 대체. v1(`topics[]`) 과 v2(`bodySchemaVersion: 2`) 를 모두 받습니다 |
+| `--dry-run` | Notion 쓰기는 건너뛰고 Obsidian 변경은 diff 로만 출력합니다. Codex 호출은 그대로 일어납니다 |
 | `--skip-notion` | Notion 채널 건너뛰기 (이때는 `NOTION_TOKEN` 이 없어도 실행됩니다) |
 | `--skip-obsidian` | Obsidian 채널 건너뛰기 (Librarian 도 함께 건너뜁니다) |
 | `--skip-librarian` | Librarian 만 건너뛰기 |
+| `--help` | 위 도움말 출력 |
 
-자동 수집·분석(Phase 2~3)이 붙기 전까지는 `--input` 없이 실행하면 입력이 없다는 오류로 끝납니다. 한 번 실행하면 입력 → Notion 발행 → Obsidian 발행 → Librarian 순서로 처리하고, 한 채널이 실패해도 다른 채널과 Librarian 은 계속 진행합니다(Run 상태는 `PARTIAL_SUCCESS`). 실행이 끝나면 상태·카운터·발행 결과·오류 요약이 출력되고, Run 기록은 `data/store/runs/<runId>.json` 에 남습니다.
+한 채널이 실패해도 다른 채널과 Librarian 은 계속 진행합니다(Run 상태는 `PARTIAL_SUCCESS`). 실행이 끝나면 상태·발행 결과·Librarian 처리 건수·오류 요약이 출력되고, Run 은 SQLite `runs` 테이블에 단계마다 기록됩니다.
 
-종료 코드는 `SOURCE_FAILURE` / `ANALYSIS_FAILURE` / `OUTPUT_FAILURE` / `ABORTED` 일 때만 1 이고, `PARTIAL_SUCCESS` 는 경고만 출력하고 0 입니다.
+종료 코드는 `SOURCE_FAILURE` / `ANALYSIS_FAILURE` / `OUTPUT_FAILURE` / `ABORTED` 일 때만 1 이고, `PARTIAL_SUCCESS` 는 경고만 출력하고 0 입니다. Hacker News 수집은 200개 story 스캔 상한에 걸리면 정직하게 `PARTIAL` 을 보고하도록 되어 있어서, 매일 `PARTIAL_SUCCESS` 로 끝나는 것은 예상된 정상 동작입니다.
+
+### Codex CLI 요구사항
+
+Analyze 단계는 Codex CLI(`codex exec`)를 자식 프로세스로 호출합니다. API 키가 아니라 사용자의 ChatGPT 구독 로그인으로 인증하므로, 실행 전에 로그인 상태를 확인하세요.
+
+```powershell
+codex login status
+```
+
+로그인되어 있지 않으면 `codex login` 으로 다시 로그인합니다. Windows 에서 `codex` 커맨드는 `.cmd`/`.ps1` shim 이라 shell 없이 spawn 할 수 없어서, 코드는 `%APPDATA%\npm` 아래의 `codex.exe` 를 직접 찾아 실행합니다(경로는 `AI_RADAR_CODEX_BIN` 으로 재정의할 수 있습니다).
+
+### 매일 자동 실행 (Windows Task Scheduler)
+
+Windows Task Scheduler 에 "AI Radar Daily" 작업이 매일 07:00에 `scripts/run-daily.cmd` 를 실행하도록 등록되어 있습니다. 등록에 쓴 명령은 다음과 같습니다.
+
+```powershell
+schtasks /Create /TN "AI Radar Daily" /TR "C:\dev\projects\ai-radar\scripts\run-daily.cmd" /SC DAILY /ST 07:00
+```
+
+`scripts/run-daily.cmd` 는 `npm run daily` 를 호출하고 표준출력·표준에러를 `data/store/logs/<yyyy-mm-dd>.log` 에 남깁니다. 이 스케줄이 매일 동작하려면 PC 가 켜져 있어야 하고 Codex 로그인이 유지돼야 합니다(위 `codex login status` 로 주기적으로 확인하세요). 작업을 지우려면 다음을 실행합니다.
+
+```powershell
+schtasks /Delete /TN "AI Radar Daily" /F
+```
+
+### 오늘 수동으로 다시 실행하기
+
+스케줄과 무관하게 지금 바로 실행하려면 `--date` 없이 그대로 실행합니다.
+
+```powershell
+npm run daily
+```
+
+같은 날짜를 다시 실행해도 Notion 은 같은 페이지를 갱신하고(Read/Applied 보존), Obsidian 은 관리 영역만 다시 교체하며, Artifact 의 `contentHash` 가 이전과 같으면 revision 은 올라가지 않습니다.
 
 Obsidian의 기본 출력은 다음과 같습니다.
 
@@ -99,6 +144,8 @@ C:\dev\knowledge\ai-knowledge\99 Daily\2026-09-12 AI Intelligence Daily.md
 npm run typecheck
 npm test
 ```
+
+`npm test` 는 먼저 `.test-dist/` 로 clean build 한 뒤 `.test-dist/test/**/*.test.js` 를 실행합니다. 현재 165개 테스트가 통과하며 `test/architecture.test.ts` 의 LEGACY allowlist 는 비어 있습니다.
 
 ## Obsidian Vault 경로 설정
 
@@ -119,12 +166,27 @@ npm run daily -- --input data/input/daily-brief.sample.json
 NOTION_TOKEN=your_integration_token
 NOTION_DATABASE_ID=your_database_id
 OBSIDIAN_VAULT_PATH=C:\dev\knowledge\ai-knowledge
-# NOTION_DATA_SOURCE_ID=optional (지정하면 data source 자동 탐색을 건너뜁니다)
-# NOTION_ALLOW_SCHEMA_FALLBACK=false (기본값. 설정 ID 와 무관한 DB 로의 fallback 을 허용하려면 true)
-# AI_RADAR_TIMEZONE=Asia/Seoul
-# AI_RADAR_STORE_DIR=<projectRoot>/data/store
-# AI_RADAR_MAX_NOTES_PER_RUN=20
 ```
+
+`src/runtime/config` 는 이 값들 외에도 아래 환경변수를 읽습니다. 모두 선택값이며, 지정하지 않으면 기본값을 씁니다.
+
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `NOTION_TOKEN` | 없음 (필수, `--skip-notion` 이면 생략 가능) | Notion Integration 토큰 |
+| `NOTION_DATABASE_ID` | 없음 (필수, `--skip-notion` 이면 생략 가능) | 대상 데이터베이스 ID |
+| `NOTION_DATA_SOURCE_ID` | 자동 탐색 | 지정하면 data source 자동 탐색을 건너뜁니다 |
+| `NOTION_ALLOW_SCHEMA_FALLBACK` | `false` | 설정 ID 와 무관한 DB 로의 스키마 fallback 을 허용하려면 `true` |
+| `OBSIDIAN_VAULT_PATH` | `C:\dev\knowledge\ai-knowledge` | Obsidian Vault 경로 |
+| `AI_RADAR_STORE_DIR` | `<projectRoot>/data/store` | SQLite DB, raw 파일, artifact 파일, 로그가 저장되는 위치 |
+| `AI_RADAR_TIMEZONE` | `Asia/Seoul` | 날짜 계산 기준 timezone |
+| `AI_RADAR_LLM_PROVIDER` | `codex-cli` | Analyze 단계에서 쓸 LLM Provider |
+| `AI_RADAR_LLM_MODEL` | Codex 기본 모델 | Codex CLI 에 넘길 모델 이름 |
+| `AI_RADAR_LLM_MAX_CALLS` | `12` | 한 Run 에서 허용하는 Codex 호출 수 상한 |
+| `AI_RADAR_MAX_DOCS` | `32` | 한 Run 에서 분석할 문서 수 상한 |
+| `AI_RADAR_LLM_TIMEOUT_MS` | `240000` | Codex 호출 1건당 타임아웃(ms) |
+| `AI_RADAR_CODEX_BIN` | `%APPDATA%\npm` 아래 `codex.exe` 자동 탐색 | Codex 실행 파일 경로. Windows 에서 `codex` shim 은 shell 없이 spawn 할 수 없어 필요합니다 |
+
+RSS 피드 목록은 환경변수가 아니라 `config/sources.json`(id, name, url)에 있습니다.
 
 Integration에는 대상 데이터베이스의 읽기, 삽입, 수정 권한이 필요합니다. 데이터베이스 속성은 다음 이름과 타입을 사용합니다.
 
@@ -143,7 +205,9 @@ Integration에는 대상 데이터베이스의 읽기, 삽입, 수정 권한이 
 
 ## Obsidian Librarian
 
-Librarian은 item 의 `knowledgeType` 을 다음 폴더에 매핑합니다. `knowledgeType` 이 없거나 중요도가 4 미만인 item 은 Knowledge Note 로 승격되지 않습니다.
+Librarian 은 `npm run daily` 파이프라인의 마지막 단계로 자동 실행됩니다. Daily Brief 의 item 중 `knowledgeType` 이 있고 중요도가 4 이상인 것만 Knowledge Note 로 승격하고, 한 Run 에서 만들거나 고치는 노트 수는 `AI_RADAR_MAX_NOTES_PER_RUN`(기본 20)으로 제한합니다. `knowledgeType` 이 없거나 중요도가 4 미만인 item 은 승격되지 않습니다.
+
+item 의 `knowledgeType` 은 다음 폴더에 매핑합니다.
 
 | item knowledgeType | 폴더 |
 | --- | --- |
@@ -159,6 +223,15 @@ Librarian은 item 의 `knowledgeType` 을 다음 폴더에 매핑합니다. `kno
 
 관리 영역은 `daily`, `content`, `evidence:<date>`, `status`, `knowledge-updates` 다섯 가지입니다. 쓸 때는 항상 새 마커 `<!-- ai-radar:… -->` 를 쓰고, 레거시 마커 `<!-- ai-coding-radar:… -->` 는 읽기 호환합니다(갱신하면 자연스럽게 새 마커로 이행합니다).
 
+## 알려진 한계
+
+- **Trend 미계산**: DerivedSignal·TrendEngine 은 아직 구현되어 있지 않습니다(Phase 4). Daily Brief 에는 TREND_WATCH 섹션이 없습니다.
+- **Entity 해석 최소**: GitHub repository URL 인식 정도만 결정적으로 해석하고, 그 외 이름·서비스는 entity 로 연결되지 않은 UNRESOLVED mention 으로만 저장됩니다.
+- **Librarian 은 아직 v1**: 규칙(knowledgeType + 중요도 4 이상)을 그대로 적용하는 deterministic 버전이라, 뉴스성 item 도 조건만 맞으면 Knowledge Note 로 승격될 수 있습니다. Proposal/사람 검토 흐름은 Phase 5에서 추가됩니다.
+- **수치 문장 거부**: 퍼센트나 증가율이 들어간 문장은 대응하는 metric evidence 가 없으면 claim 으로 승격되지 않고 거부됩니다.
+- **Codex 지연시간 변동**: 호출 1건에 25초에서 2분 이상까지 걸릴 수 있고, 한 Run 전체는 대략 8분에서 15분이 걸립니다.
+- **Notion schema fallback 기본 off**: 설정한 data source ID 가 없을 때 다른 DB 로 자동 대체하는 동작은 기본적으로 꺼져 있습니다(`NOTION_ALLOW_SCHEMA_FALLBACK=true` 로 켜야 합니다).
+
 ## 다음 단계
 
-`docs/architecture/MIGRATION_AND_ACCEPTANCE.md` §4 의 Phase 2(Raw Store, Storage, 첫 Source)와 Phase 3(자동 Daily Brief 생성)으로 이어집니다. 수동 입력 예시는 `data/input/daily-brief.sample.json` 에 있으며 `--input` 으로 지정할 때만 사용됩니다.
+Phase 0~3 은 구현되어 매일 자동으로 돕니다 (`docs/architecture/MIGRATION_AND_ACCEPTANCE.md` §9). 다음은 Phase 4(Trend Engine, DerivedSignal, Trend Watch)와 Phase 5(Librarian v2 제안·검토 흐름), 그리고 Horizon/GitHub Source 추가입니다. 수동 입력 예시는 `data/input/daily-brief.sample.json` 에 있으며 `--input` 으로 지정할 때만 사용됩니다.

@@ -132,7 +132,7 @@ Evidence 누적 → Knowledge Note (evidence history, best practice)
 ### 5.2 구조적 보장
 
 - `application/analyze/*`, `application/trend/*`, `application/briefing/*` 는 생성자에 `LlmProvider` 와 `*Store` 만 받는다. `VaultPort`, `Publisher`, `HttpClient` 는 주입 목록에 없다. 아키텍처 테스트가 이 Use Case 파일의 import를 검사한다.
-- 셸 실행(`child_process`)은 `adapters/sources/horizon/` 에서만 허용되며, 명령과 인자는 코드 상수 + config 값만 사용한다. 외부 문서 텍스트가 인자에 들어가는 경로는 없다 (테스트: 인자 조립 함수는 `RawObservation` 을 입력받지 않는다).
+- 셸 실행(`child_process`)은 `adapters/sources/horizon/` 과 `adapters/llm/codex-cli/` 에서만 허용되며(`shell:false`), 명령과 인자는 코드 상수 + config 값 + 우리가 만든 임시 파일 경로만 사용한다. **외부 문서 텍스트가 인자(argv)에 들어가는 경로는 없다.** codex prompt 처럼 비신뢰 텍스트를 넘겨야 하는 경우는 자식 프로세스의 **stdin** 으로 써 넣고 곧바로 stdin 을 닫는다 — argv 에는 흔적이 남지 않으므로 프로세스 목록·셸 히스토리·명령줄 길이 제한에 노출되지 않는다 (테스트: `buildCodexArgs` 는 prompt 를 입력으로 받지 않고, spawn stub 이 stdin 기록을 검증한다).
 - 파일 쓰기 경로는 `adapters/storage/fs` (data/store 하위만), `adapters/obsidian` (Vault 하위만). 두 곳 모두 경로 탈출 검사.
 - 로그 redaction: config에서 secret으로 표시된 값은 Logger가 마스킹 (현재 `errorMessage(valuesToRedact)` 방식 유지·확장).
 

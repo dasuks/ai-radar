@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 
 import { CollectSources } from "../src/application/collect/collect-sources.js";
 import { HackerNewsSource } from "../src/adapters/sources/hackernews/hackernews-source.js";
+import { looksAiRelated } from "../src/policies/classification/source-relevance.js";
 import { RssSource } from "../src/adapters/sources/rss/rss-source.js";
 import type {
   CollectRequest,
@@ -112,7 +113,7 @@ function emptyResult(status: CollectResult["status"], window: TimeWindow): Colle
 
 describe("CollectSources", () => {
   test("stores observations, saves checkpoints and emits ITEM_COLLECTED", async () => {
-    const { collector, raw, checkpoints, events } = harness([new HackerNewsSource(), new RssSource(RSS_FEED)]);
+    const { collector, raw, checkpoints, events } = harness([new HackerNewsSource({ isRelevant: looksAiRelated }), new RssSource(RSS_FEED)]);
 
     const summary = await collector.collect({ window: WINDOW, runId: RUN_ID });
 
@@ -135,7 +136,7 @@ describe("CollectSources", () => {
   });
 
   test("rerunning the same window stores nothing new and reports NO_NEW_ITEMS", async () => {
-    const { collector, raw } = harness([new HackerNewsSource(), new RssSource(RSS_FEED)]);
+    const { collector, raw } = harness([new HackerNewsSource({ isRelevant: looksAiRelated }), new RssSource(RSS_FEED)]);
 
     const first = await collector.collect({ window: WINDOW, runId: RUN_ID });
     assert.equal(first.overall, "ALL_OK");
@@ -152,7 +153,7 @@ describe("CollectSources", () => {
 
   test("one failing source plus one healthy source is PARTIAL", async () => {
     const failing = stubSource("stub-broken", (request) => emptyResult("FAILED", request.window));
-    const { collector, checkpoints } = harness([new HackerNewsSource(), failing]);
+    const { collector, checkpoints } = harness([new HackerNewsSource({ isRelevant: looksAiRelated }), failing]);
 
     const summary = await collector.collect({ window: WINDOW, runId: RUN_ID });
 
@@ -177,7 +178,7 @@ describe("CollectSources", () => {
   });
 
   test("a 429 from Hacker News is FAILED and leaves the stored checkpoint alone", async () => {
-    const { collector, checkpoints } = harness([new HackerNewsSource()], {
+    const { collector, checkpoints } = harness([new HackerNewsSource({ isRelevant: looksAiRelated })], {
       [HN_TOP_STORIES_URL]: { status: 429, headers: {}, text: "" },
     });
     checkpoints.seed("hackernews", { schemaVersion: 1, data: { lastMaxItemId: 40999999 } });
@@ -217,7 +218,7 @@ describe("CollectSources", () => {
     const throwing = stubSource("stub-throws", () => {
       throw new Error("boom");
     });
-    const { collector } = harness([new HackerNewsSource(), throwing]);
+    const { collector } = harness([new HackerNewsSource({ isRelevant: looksAiRelated }), throwing]);
 
     const summary = await collector.collect({ window: WINDOW, runId: RUN_ID });
 
@@ -288,7 +289,7 @@ describe("CollectSources", () => {
   });
 
   test("sourceIds narrows the run", async () => {
-    const { collector } = harness([new HackerNewsSource(), new RssSource(RSS_FEED)]);
+    const { collector } = harness([new HackerNewsSource({ isRelevant: looksAiRelated }), new RssSource(RSS_FEED)]);
 
     const summary = await collector.collect({ window: WINDOW, runId: RUN_ID, sourceIds: ["rss:example-weekly"] });
 

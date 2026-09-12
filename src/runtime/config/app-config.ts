@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
+import { isRecord } from "../../domain/shared/validation.js";
 
 export const DEFAULT_OBSIDIAN_VAULT = "C:\\dev\\knowledge\\ai-knowledge";
 export const DEFAULT_TIMEZONE = "Asia/Seoul";
@@ -133,10 +134,6 @@ function positiveInteger(raw: string | undefined, fallback: number, name: string
     throw new ConfigError(`${name} must be a positive integer, got "${value}"`);
   }
   return parsed;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** `<projectRoot>/config/sources.json` 이 있으면 읽는다. 없으면 빈 목록. */

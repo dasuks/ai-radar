@@ -6,6 +6,7 @@ import { LinkAndDedupe } from "../src/application/normalize/link-and-dedupe.js";
 import { NormalizeObservations } from "../src/application/normalize/normalize-observations.js";
 import { RecordMetrics, coverageFromSummary } from "../src/application/normalize/record-metrics.js";
 import { HackerNewsSource } from "../src/adapters/sources/hackernews/hackernews-source.js";
+import { looksAiRelated } from "../src/policies/classification/source-relevance.js";
 import { RssSource } from "../src/adapters/sources/rss/rss-source.js";
 import type { NormalizedDocument } from "../src/domain/documents/normalized-document.js";
 import type { RawObservation } from "../src/domain/documents/raw-observation.js";
@@ -64,7 +65,7 @@ function pipeline(): Pipeline {
     [RSS_FEED_URL]: textResponse(RSS_2_FEED_XML),
     [ATOM_FEED_URL]: textResponse(ATOM_FEED_XML),
   });
-  const sources: SourceAdapter[] = [new HackerNewsSource(), new RssSource(RSS_FEED), new RssSource(ATOM_FEED)];
+  const sources: SourceAdapter[] = [new HackerNewsSource({ isRelevant: looksAiRelated }), new RssSource(RSS_FEED), new RssSource(ATOM_FEED)];
   return {
     sources,
     collector: new CollectSources({

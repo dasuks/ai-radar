@@ -10,5 +10,6 @@ export {
   type CodexProcess,
   type CodexSpawnOptions,
   type CodexStream,
+  type CodexWritable,
   type SpawnCodex,
 } from "./codex-cli-provider.js";

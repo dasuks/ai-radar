@@ -1,4 +1,4 @@
-import { decodeEntities } from "./html.js";
+import { decodeEntities } from "../../shared/html.js";
 
 /**
  * 손으로 쓴 최소 XML 리더 (의존성 없음).

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { HackerNewsSource } from "../src/adapters/sources/hackernews/hackernews-source.js";
-import { looksAiRelated } from "../src/adapters/sources/hackernews/keywords.js";
+import { looksAiRelated } from "../src/policies/classification/source-relevance.js";
 import { readHnPayload } from "../src/adapters/sources/hackernews/normalize.js";
 import { validateRawObservation } from "../src/domain/documents/raw-observation.js";
 import { validateNormalizedDocument } from "../src/domain/documents/normalized-document.js";
@@ -39,6 +39,11 @@ function makeRequest(clock: FakeClock, overrides: Partial<CollectRequest> = {}):
   };
 }
 
+/** Composition Root 와 같은 조합: 관련성 정책을 주입한 adapter (adapter 자체는 정책을 모른다). */
+function hackerNewsSource(): HackerNewsSource {
+  return new HackerNewsSource({ isRelevant: looksAiRelated });
+}
+
 function byExternalId(observations: readonly RawObservation[], externalId: string): RawObservation {
   const found = observations.find((observation) => observation.externalId === externalId);
   assert.ok(found, `expected an observation for ${externalId}`);
@@ -48,6 +53,7 @@ function byExternalId(observations: readonly RawObservation[], externalId: strin
 describe("HackerNewsSource descriptor", () => {
   test("declares honest capabilities and license", () => {
     const source = new HackerNewsSource();
+
     assert.equal(source.descriptor.id, "hackernews");
     assert.equal(source.descriptor.kind, "API");
     assert.deepEqual(source.descriptor.capabilities.metrics, ["hn.points", "hn.comments"]);
@@ -72,12 +78,28 @@ describe("AI keyword filter", () => {
   });
 });
 
+describe("HackerNewsSource relevance policy injection", () => {
+  test("기본값은 필터 없음: 정책을 주입하지 않으면 sourdough 이야기도 통과한다", async () => {
+    const clock = new FakeClock(NOW);
+    const http = new FakeHttp(hackerNewsRoutes());
+    const { ctx } = makeContext(http, clock);
+
+    const unfiltered = await new HackerNewsSource().collect(makeRequest(clock), ctx);
+    const filtered = await hackerNewsSource().collect(makeRequest(clock), ctx);
+
+    const unfilteredIds = unfiltered.observations.map((observation) => observation.externalId);
+    const filteredIds = filtered.observations.map((observation) => observation.externalId);
+    assert.ok(unfilteredIds.length > filteredIds.length, "필터가 없으면 더 많이 수집한다");
+    for (const id of filteredIds) assert.ok(unfilteredIds.includes(id));
+  });
+});
+
 describe("HackerNewsSource.collect", () => {
   test("happy path: filters by window and keyword, attaches comments and metrics", async () => {
     const clock = new FakeClock(NOW);
     const http = new FakeHttp(hackerNewsRoutes());
     const { ctx } = makeContext(http, clock);
-    const source = new HackerNewsSource();
+    const source = hackerNewsSource();
 
     const result = await source.collect(makeRequest(clock), ctx);
 
@@ -124,7 +146,7 @@ describe("HackerNewsSource.collect", () => {
     const clock = new FakeClock(NOW);
     const http = new FakeHttp(hackerNewsRoutes());
     const { ctx } = makeContext(http, clock);
-    const source = new HackerNewsSource();
+    const source = hackerNewsSource();
     const result = await source.collect(makeRequest(clock), ctx);
 
     const story = byExternalId(result.observations, String(HN_STORY_ID));
@@ -171,7 +193,7 @@ describe("HackerNewsSource.collect", () => {
     routes[HN_TOP_STORIES_URL] = { status: 429, headers: { "retry-after": "30" }, text: "" };
     const http = new FakeHttp(routes);
     const { ctx } = makeContext(http, clock);
-    const source = new HackerNewsSource();
+    const source = hackerNewsSource();
 
     const seeded = { schemaVersion: 1, data: { lastMaxItemId: 40999999 } };
     const result = await source.collect(makeRequest(clock, { checkpoint: seeded }), ctx);
@@ -193,7 +215,7 @@ describe("HackerNewsSource.collect", () => {
     const http = new FakeHttp(routes);
     const { ctx } = makeContext(http, clock);
 
-    const result = await new HackerNewsSource().collect(makeRequest(clock), ctx);
+    const result = await hackerNewsSource().collect(makeRequest(clock), ctx);
 
     assert.equal(result.status, "FAILED");
     assert.equal(result.errors[0]?.kind, "PARSE");
@@ -205,7 +227,7 @@ describe("HackerNewsSource.collect", () => {
     const http = new FakeHttp(hackerNewsRoutes());
     const { ctx } = makeContext(http, clock);
 
-    const result = await new HackerNewsSource().collect(makeRequest(clock, { maxItems: 1 }), ctx);
+    const result = await hackerNewsSource().collect(makeRequest(clock, { maxItems: 1 }), ctx);
 
     assert.equal(result.status, "PARTIAL");
     assert.equal(result.observations.length, 1);
@@ -220,7 +242,7 @@ describe("HackerNewsSource.collect", () => {
     const { ctx } = makeContext(http, clock);
 
     const request = makeRequest(clock, { deadlineAt: new Date(clock.nowMs() + 3_000).toISOString() });
-    const result = await new HackerNewsSource().collect(request, ctx);
+    const result = await hackerNewsSource().collect(request, ctx);
 
     assert.equal(result.status, "PARTIAL");
     assert.equal(result.coverage.truncated, true);
@@ -237,7 +259,7 @@ describe("HackerNewsSource.collect", () => {
     controller.abort();
     const ctx: CollectContext = { signal: controller.signal, clock, logger, http };
 
-    const result = await new HackerNewsSource().collect(makeRequest(clock), ctx);
+    const result = await hackerNewsSource().collect(makeRequest(clock), ctx);
     assert.ok(result.status === "PARTIAL" || result.status === "FAILED");
   });
 
@@ -248,7 +270,7 @@ describe("HackerNewsSource.collect", () => {
     const http = new FakeHttp(routes);
     const { ctx } = makeContext(http, clock);
 
-    const result = await new HackerNewsSource().collect(makeRequest(clock), ctx);
+    const result = await hackerNewsSource().collect(makeRequest(clock), ctx);
     assert.equal(result.status, "COMPLETE");
     assert.equal(result.observations.length, 2);
   });

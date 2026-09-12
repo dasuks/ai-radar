@@ -85,6 +85,8 @@ export function emptyCounters(): RunCounters {
 export interface RunOutcomeInput {
   collect: "ALL_OK" | "PARTIAL" | "ALL_FAILED" | "NO_NEW_ITEMS" | "SKIPPED";
   analysisFailed: boolean;
+  /** LLM 예산 소진·배치 실패로 분석이 일부만 끝남 (PIPELINES §5.4) */
+  analysisPartial?: boolean;
   artifactCreated: boolean;
   channelsAttempted: number;
   channelsFailed: number;
@@ -97,7 +99,7 @@ export function decideRunStatus(input: RunOutcomeInput): RunStatus {
   if (input.analysisFailed) return "ANALYSIS_FAILURE";
   if (input.channelsAttempted > 0 && input.channelsFailed === input.channelsAttempted) return "OUTPUT_FAILURE";
   if (input.collect === "NO_NEW_ITEMS" && !input.artifactCreated) return "NO_NEW_INFORMATION";
-  if (input.collect === "PARTIAL" || input.channelsFailed > 0 || input.librarianFailed) return "PARTIAL_SUCCESS";
+  if (input.collect === "PARTIAL" || input.analysisPartial || input.channelsFailed > 0 || input.librarianFailed) return "PARTIAL_SUCCESS";
   return "SUCCESS";
 }
 
