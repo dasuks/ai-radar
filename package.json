@@ -1,0 +1,25 @@
+{
+  "name": "ai-coding-radar",
+  "version": "1.0.0",
+  "description": "AI 코딩 실무 지식을 Daily Brief로 정리하는 개인용 파이프라인",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "daily": "tsx src/run-daily.ts",
+    "test": "npm run test:build && node --test .test-dist/test/briefing.test.js .test-dist/test/notion-writer.test.js .test-dist/test/obsidian-librarian.test.js",
+    "test:build": "tsc --noEmit false --outDir .test-dist --rootDir . --declaration false --declarationMap false --sourceMap false",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@notionhq/client": "^5.26.0",
+    "dotenv": "^17.4.2"
+  }
+}
