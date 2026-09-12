@@ -112,7 +112,8 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
       const dryRun = options.dryRun ?? false;
       const date = options.date ?? calendarDateIn(config.timezone, clock.nowMs());
       const window: TimeWindow = trailingWindow(clock.nowMs(), config.sources.windowHours);
-      const reportChannels = resolveReportChannels(config, options, overrides, logger);
+      const reportEntryUrls = new Map<string, string>();
+      const reportChannels = resolveReportChannels(config, options, overrides, logger, reportEntryUrls);
       if (reportChannels === null && !options.skipNotion) {
         logger.warn("NOTION_REPORTS_DATABASE_ID is not set; the reports stage is skipped and the daily brief gets no report links");
       }
@@ -127,6 +128,7 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
         events,
         random,
         reportChannels,
+        reportEntryUrls,
       });
       const source = resolveBriefSource(options, overrides, intelligence.autoBrief);
 
@@ -220,6 +222,7 @@ function resolveReportChannels(
   options: DailyRunOptions,
   overrides: DailyPipelineOverrides,
   logger: Logger,
+  reportEntryUrls: Map<string, string>,
 ): ReportChannels | null {
   if (overrides.reportChannels !== undefined) return overrides.reportChannels;
   if (options.skipNotion) return null;
@@ -234,6 +237,11 @@ function resolveReportChannels(
   });
   return {
     sectionReport: { renderer: new NotionSectionReportRenderer(), publisher },
-    digest: { renderer: new NotionDigestRenderer(), publisher },
+    digest: {
+      renderer: new NotionDigestRenderer({
+        reportUrlFor: (story) => (story.reportEntryId ? (reportEntryUrls.get(story.reportEntryId) ?? null) : null),
+      }),
+      publisher,
+    },
   };
 }

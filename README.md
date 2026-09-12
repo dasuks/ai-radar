@@ -203,6 +203,16 @@ Integration에는 대상 데이터베이스의 읽기, 삽입, 수정 권한이 
 
 설정한 ID와 일치하는 data source가 없을 때 스키마가 유일하게 일치하는 다른 data source로 fallback 하는 동작은 **기본 비활성** 입니다 (`docs/architecture/INTEGRATIONS_AND_SAFETY.md` §4 R-N1). 다른 workspace DB 에 쓰는 사고를 막기 위해서이며, 필요하면 `NOTION_DATA_SOURCE_ID` 를 지정하거나 `NOTION_ALLOW_SCHEMA_FALLBACK=true` 로 명시적으로 켭니다.
 
+## 상세 리포트와 전체 목록 (Notion `AI Radar Reports`)
+
+Daily 페이지는 짧은 요약이고, 자세한 내용은 별도 DB `AI Radar Reports` 에 매일 다음 페이지가 생깁니다.
+
+- `<날짜> · <섹션> 상세`: 섹션(AI 교양, AI Coding, LLM, Agent Engineering, Evals & Reliability, AI Economics)마다 1개. 항목별로 무슨 일이 있었나(긴 서술), 근거 인용(원문·댓글 링크), 주장 구분표, 커뮤니티 반응, 왜 중요한가, 적용 방법, 반론과 불확실한 점, 출처. 근거가 충분한 항목(본문이 있거나 claim 3개 이상)만 실리고, 중요하면 여러 섹션에 중복 등장합니다.
+- `<날짜> · 전체 목록`: 그날 들어온 이야기 전부. 한국어 제목 + 1~3줄 요약 + 근거 수준 태그 + 원문 미리보기 카드(bookmark) + HN 토론 링크 + (있으면) 상세 리포트 링크.
+- Daily 페이지의 각 섹션 제목 아래 "상세 리포트 →", 맨 아래 "오늘 들어온 이야기 전체 목록 →" 링크가 붙습니다.
+
+설정: `.env` 에 `NOTION_REPORTS_DATABASE_ID` (선택: `NOTION_REPORTS_DATA_SOURCE_ID`). 없으면 리포트 단계는 건너뛰고 Daily 만 발행합니다. 리포트 DB 는 런타임 통합(Integration)에 공유돼 있어야 합니다. 하루 Codex 호출은 약 15회, 실행 25~35분입니다.
+
 ## Obsidian Librarian
 
 Librarian 은 `npm run daily` 파이프라인의 마지막 단계로 자동 실행됩니다. Daily Brief 의 item 중 `knowledgeType` 이 있고 중요도가 4 이상인 것만 Knowledge Note 로 승격하고, 한 Run 에서 만들거나 고치는 노트 수는 `AI_RADAR_MAX_NOTES_PER_RUN`(기본 20)으로 제한합니다. `knowledgeType` 이 없거나 중요도가 4 미만인 item 은 승격되지 않습니다.

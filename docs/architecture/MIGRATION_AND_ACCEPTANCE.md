@@ -682,3 +682,9 @@ v1 (bodySchemaVersion 없음): { date, title, summary[], topics[{id,title,type,i
 - `--resume <runId>` 미구현. Phase 3 표의 `AI_RADAR_AUTO_BRIEF=false` rollback 플래그 대신 `--input` 수동 override 만 있음.
 - RSS 는 checkpoint 의 seen guid 를 건너뛰므로 같은 guid 로 정정된 글은 새 observation 이 되지 않는다 (CONTRACTS §1.1 정정 규칙과 충돌). 해결: guid 뿐 아니라 (guid, updated/hash) 로 skip 판정.
 - 의도된 범위 추가: `scripts/run-daily.cmd`(스케줄러 래퍼)와 `--skip-*` 플래그는 운영 편의로 넣었고 설계 문서에는 없었다. README 에 기록.
+
+### 9.6 리포트 계층 실운영 (2026-09-13)
+
+첫 실행 결과: window 문서 31건 → 클러스터 31개 → claim 77건(2 거부) → 섹션 리포트 5개(항목 11개, 자격 미달 20개는 목록에만) + 전체 목록 31건 + Daily 11항목. Codex 호출 15회, 약 30분. Notion `AI Radar Reports` DB에 페이지 6개, Daily 페이지에 섹션별 "상세 리포트 →" 와 "전체 목록 →" 링크 확인. 전체 목록의 "상세 리포트 →" 링크는 첫 실행 뒤 연결했으므로 다음 날 목록부터 나타난다.
+
+알려진 gap: `내 환경에 적용할 후보` 가 PRACTICAL 항목으로 제한되지 않음(§9.5), 한 항목이 여러 섹션 리포트에 실릴 수 있지만 Daily 에는 최고 점수 섹션에만 실림, reports 발행 실패 시 Daily 는 링크 없이 발행됨(의도), `NotionReportsPublisher` 가 dry-run 에서도 data source 조회를 함(읽기 전용).

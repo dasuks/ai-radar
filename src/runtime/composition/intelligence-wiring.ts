@@ -67,6 +67,8 @@ export interface IntelligenceWiringDeps {
   random: RandomSource;
   /** 리포트 발행 채널. 없으면 reports 단계를 건너뛴다 */
   reportChannels?: ReportChannels | null;
+  /** 발행된 섹션 리포트 URL (entryId → url). 전체 목록 렌더러가 '상세 리포트 →' 링크에 쓴다 */
+  reportEntryUrls?: Map<string, string>;
 }
 
 interface IntelState {
@@ -347,6 +349,9 @@ export function buildIntelligenceWiring(deps: IntelligenceWiringDeps): Intellige
             recorder: pipeline.recorder,
           });
           state.reportLinks.set(body.section, link);
+          if (link.externalUrl && deps.reportEntryUrls) {
+            for (const entry of body.entries) deps.reportEntryUrls.set(entry.id, link.externalUrl);
+          }
         }
 
         state.digestLink = await storeAndPublish(ctx, {
