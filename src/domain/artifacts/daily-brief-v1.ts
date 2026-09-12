@@ -173,10 +173,11 @@ export function upcastV1ToDailyBriefBody(v1: DailyBriefingV1, artifactIdValue: s
     date: v1.date,
     title: v1.title,
     oneMinuteSummary: v1.summary,
-    sections: items.length ? [{ kind: "AI_CODING", items }] : [],
+    sections: items.length ? [{ kind: "AI_CODING", items, report: null }] : [],
     learnOneThing: best,
     applyCandidates,
     sources: [...sources.values()],
     coverage: { sourcesAttempted: [MANUAL_SOURCE_ID], sourcesFailed: [], partial: false, note: null },
+    digest: null,
   };
 }

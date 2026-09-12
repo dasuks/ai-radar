@@ -16,6 +16,7 @@ AI Radar의 주요 결정을 기록한다. 여기 있는 ADR은 `docs/architectu
 | [ADR-0006](./0006-intelligence-content-render-publish-separation.md) | Intelligence / Content / Render / Publish 분리 | Accepted | 2026-09-12 |
 | [ADR-0007](./0007-notion-and-obsidian-roles.md) | Notion과 Obsidian의 역할 | Accepted | 2026-09-12 |
 | [ADR-0008](./0008-public-content-approval-boundary.md) | Public Content Approval Boundary | Accepted | 2026-09-12 |
+| [ADR-0009](./0009-reports-layer.md) | Reports Layer (섹션 상세 리포트 + 전체 목록) | Accepted | 2026-09-13 |
 
 상태 값: `Proposed`, `Accepted`, `Superseded by ADR-XXXX`, `Deprecated`.
 

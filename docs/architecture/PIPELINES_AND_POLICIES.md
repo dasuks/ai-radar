@@ -426,3 +426,18 @@ PublishArtifact 내부:
 ## 10. Events
 
 초기 구현은 `EventSink.emit(event)` → 로그 + `run_events` insert. 소비자 없음. 미래에 Discord alert 등을 붙일 때 `run_events` 를 polling하거나 in-process subscriber를 추가한다. Durability가 필요한 작업(재시도, 승인 대기)은 이벤트가 아니라 **테이블 상태**(publications.status, knowledge_proposals.decision)로 관리한다.
+
+## 11. 리포트 단계 (2026-09-13 추가)
+
+```
+8. ExtractClaims
+9a. BuildSectionReports  → SECTION_REPORT × (자격 항목이 있는 섹션 수)   LLM strong, 섹션당 1회 (항목 8개 초과 시 분할)
+9b. BuildDailyDigest     → DAILY_DIGEST (window 클러스터 전부)             LLM cheap, 20개씩
+9c. PublishArtifact(reports → Notion Reports DB)                          externalUrl 확보
+10. BuildDailyBrief      → DAILY_BRIEF (리포트 항목에서 2~3문장 요약, 링크 포함)  LLM strong 1회
+11. Publish(daily) → Librarian
+```
+
+- 섹션 배정: 클러스터마다 CULTURE 점수 ≥ 임계면 CULTURE, PRACTICAL 점수 ≥ 임계면 classification 이 정한 실무 섹션. 둘 다 넘으면 두 섹션에 모두 실린다. 상한 없음.
+- 분석 대상 문서 상한 `AI_RADAR_MAX_DOCS` 기본 60, LLM 호출 상한 `AI_RADAR_LLM_MAX_CALLS` 기본 24. 하루 실행은 약 25~30분.
+- Daily 의 item 본문은 리포트 항목의 narrative 에서 요약한다 (claim 을 두 번 요약하지 않는다). 사실 출처는 여전히 claim·evidence 다.

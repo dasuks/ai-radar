@@ -9,7 +9,9 @@ export const DEFAULT_TIMEZONE = "Asia/Seoul";
 export const DAILY_FOLDER = "99 Daily";
 const DEFAULT_MAX_NOTES_PER_RUN = 20;
 const DEFAULT_LLM_PROVIDER = "codex-cli";
-const DEFAULT_LLM_MAX_CALLS = 12;
+/** ADR-0009: 리포트 단계가 섹션마다 1회 + digest 배치 + Daily 1회를 더 쓴다. */
+const DEFAULT_LLM_MAX_CALLS = 24;
+const DEFAULT_MAX_DOCS = 60;
 
 /** Windows 에서 `codex` 는 .cmd/.ps1 shim 이라 shell 없이 spawn 할 수 없다. 실행 파일을 직접 찾는다. */
 function resolveCodexBinary(env: NodeJS.ProcessEnv): string {
@@ -36,6 +38,12 @@ export class ConfigError extends Error {
   }
 }
 
+/** INTEGRATIONS_AND_SAFETY.md §1.6 — `AI Radar Reports` DB. 없으면 reports 단계는 SKIPPED. */
+export interface NotionReportsConfig {
+  databaseId: string;
+  dataSourceId?: string;
+}
+
 export interface NotionConfig {
   token: string;
   databaseId: string;
@@ -43,6 +51,8 @@ export interface NotionConfig {
   dataSourceId?: string;
   /** NOTION_ALLOW_SCHEMA_FALLBACK === "true" 일 때만 스키마 일치 fallback 허용 (R-N1) */
   allowSchemaFallback: boolean;
+  /** NOTION_REPORTS_DATABASE_ID 가 없으면 null (리포트 단계 SKIPPED) */
+  reports: NotionReportsConfig | null;
 }
 
 export interface ObsidianConfig {
@@ -71,7 +81,7 @@ export interface LlmConfig {
   maxCallsPerRun: number;
   /** codex 실행 파일 경로 (AI_RADAR_CODEX_BIN, 없으면 npm 전역 설치 경로 탐색, 최후에 "codex") */
   codexBinary: string;
-  /** 분석 대상 문서 수 상한 (AI_RADAR_MAX_DOCS, 기본 32) */
+  /** 분석 대상 문서 수 상한 (AI_RADAR_MAX_DOCS, 기본 60) */
   maxDocumentsPerRun: number;
   timeoutMs: number;
 }
@@ -188,12 +198,21 @@ export function loadConfig(
     ? requiredEnvironmentValue(env, "NOTION_DATABASE_ID")
     : (optionalEnvironmentValue(env, "NOTION_DATABASE_ID") ?? "");
   const dataSourceId = optionalEnvironmentValue(env, "NOTION_DATA_SOURCE_ID");
+  const reportsDatabaseId = optionalEnvironmentValue(env, "NOTION_REPORTS_DATABASE_ID");
+  const reportsDataSourceId = optionalEnvironmentValue(env, "NOTION_REPORTS_DATA_SOURCE_ID");
+  const reports: NotionReportsConfig | null = reportsDatabaseId
+    ? {
+        databaseId: reportsDatabaseId,
+        ...(reportsDataSourceId === undefined ? {} : { dataSourceId: reportsDataSourceId }),
+      }
+    : null;
 
   const notion: NotionConfig = {
     token,
     databaseId,
     ...(dataSourceId === undefined ? {} : { dataSourceId }),
     allowSchemaFallback: trimmed(env.NOTION_ALLOW_SCHEMA_FALLBACK) === "true",
+    reports,
   };
 
   const vaultRoot = resolve(trimmed(env.OBSIDIAN_VAULT_PATH) || DEFAULT_OBSIDIAN_VAULT);
@@ -210,7 +229,7 @@ export function loadConfig(
     model: trimmed(env.AI_RADAR_LLM_MODEL) || null,
     maxCallsPerRun: positiveInteger(env.AI_RADAR_LLM_MAX_CALLS, DEFAULT_LLM_MAX_CALLS, "AI_RADAR_LLM_MAX_CALLS"),
     codexBinary: resolveCodexBinary(env),
-    maxDocumentsPerRun: positiveInteger(env.AI_RADAR_MAX_DOCS, 32, "AI_RADAR_MAX_DOCS"),
+    maxDocumentsPerRun: positiveInteger(env.AI_RADAR_MAX_DOCS, DEFAULT_MAX_DOCS, "AI_RADAR_MAX_DOCS"),
     timeoutMs: positiveInteger(env.AI_RADAR_LLM_TIMEOUT_MS, 240_000, "AI_RADAR_LLM_TIMEOUT_MS"),
   };
 
@@ -223,7 +242,9 @@ export function loadConfig(
     windowHours: positiveInteger(env.AI_RADAR_WINDOW_HOURS, DEFAULT_WINDOW_HOURS, "AI_RADAR_WINDOW_HOURS"),
   };
 
-  const redaction = [token, databaseId, dataSourceId ?? "", vaultRoot].filter((value) => value.length > 0);
+  const redaction = [token, databaseId, dataSourceId ?? "", reportsDatabaseId ?? "", reportsDataSourceId ?? "", vaultRoot].filter(
+    (value) => value.length > 0,
+  );
 
   return {
     projectRoot,

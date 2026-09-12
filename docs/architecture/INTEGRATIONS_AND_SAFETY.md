@@ -261,3 +261,17 @@ Collector/Analyzer/Librarian 어느 것도 `Publisher` Port를 주입받지 않�
 ### 8.3 공통 결손과 우리 대응
 
 두 프로젝트 모두 upstream raw payload와 구조화된 `comments[]` 를 보존하지 않는다. AI Radar의 `RawObservation.payloadRef` 와 `NormalizedComment[]` 는 이 결손을 우리 adapter 경계에서 메우기 위한 것이다.
+
+### 1.6 Notion 리포트 DB (2026-09-13 추가)
+
+| 항목 | 값 |
+| --- | --- |
+| DB | `AI Radar Reports` (Daily DB 와 별개, 같은 workspace 최상위) |
+| 환경변수 | `NOTION_REPORTS_DATABASE_ID`, optional `NOTION_REPORTS_DATA_SOURCE_ID`. 없으면 reports 단계는 SKIPPED (Daily 는 링크 없이 발행) |
+| 속성 | Name(title), Date(date), Section(select: AI 교양 / AI Coding / LLM / Agent Engineering / Evals & Reliability / AI Economics / Trend Watch / 전체 목록), Items(number), Importance(number), Read, Applied |
+| upsert 키 | Date + Section. 2개 이상이면 중단 |
+| 사용자 필드 | Read, Applied 는 생성 시에만 false, 갱신 시 제외 (Daily DB 와 동일 규칙) |
+| 본문 | 첫 블록 `ai-radar:revision:<n>` callout. 전체 목록 페이지는 이야기마다 Notion bookmark 블록(썸네일 카드)을 넣는다. 이미지는 Notion 이 미리보기를 가져오며 우리는 수집하지 않는다 |
+| 링크 방향 | Daily 페이지 → 섹션 리포트 / 전체 목록 (URL). Relation 속성은 두지 않는다 (Daily 페이지가 나중에 만들어지므로) |
+
+Obsidian 에는 리포트를 복제하지 않는다 (지식 노트 역할 유지).

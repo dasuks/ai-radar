@@ -845,3 +845,21 @@ CREATE TABLE knowledge_proposals (
 | Obsidian Evidence | managed region marker `ai-radar:evidence:<date>` (노트당 날짜별 1개) | 같은 marker 교체 |
 | Knowledge Proposal | (targetTitle, operation, claimIds hash) | 중복 제안 생성 안 함 |
 | SNS Post | (artifactId, channel) + approval contentHash | 동일 hash 발행 완료면 skip. 다른 hash면 재승인 필요 |
+
+## 9. 리포트 계층 계약 (2026-09-13 추가)
+
+사용자 요구: Daily 는 너무 요약돼 있으니 (1) 오늘 들어온 이야기 **전부**를 담는 목록과 (2) 섹션(주제)마다 **긴 상세 리포트**를 두고, Daily 는 그 위의 짧은 요약으로 바꾼다. 구현은 `src/domain/artifacts/section-report.ts`.
+
+| Artifact type | targetKey | body | 발행 채널 |
+| --- | --- | --- | --- |
+| `SECTION_REPORT` | `<date>:<BriefSectionKind>` | `SectionReportBody { overview[], entries: ReportEntry[], sources, excluded, coverage }` | Notion `AI Radar Reports` DB (Date + Section 으로 upsert) |
+| `DAILY_DIGEST` | `<date>` | `DailyDigestBody { stories: DigestStory[] (window 의 클러스터 대표 전부), coverage }` | 같은 DB, Section = "전체 목록" |
+| `DAILY_BRIEF` (v2 확장) | `<date>` | `sections[].report: ArtifactLink`, `digest: ArtifactLink` 추가. item 은 ReportEntry 와 같은 id | 기존 Daily DB |
+
+규칙:
+- `ReportEntry` 자격은 `qualifiesForDetailedReport`: 본문(FULL/EXCERPT)이 있거나 검증된 claim 3개 이상. 자격이 없는 이야기는 `excluded[]` 에 사유와 함께 남고, 전체 목록에는 항상 실린다 (버려지는 이야기 0개).
+- 한 항목은 임계값을 넘는 **모든** 섹션에 실릴 수 있다 (편집 분류는 경계가 아니다). 섹션당 항목 상한은 없다.
+- `ReportEntry.narrative` 는 제공된 claim·evidence 에서만 쓴다. `sectionReportViolations` 가 evidenceId/claimId 존재를 검증한다.
+- `DigestStory` 는 LLM 이 빠뜨려도 결정적 fallback(원문 제목 + 첫 claim 또는 "제목만 수집됨")으로 채운다.
+- `ArtifactLink.externalUrl` 은 발행 후 채워지므로 Daily 는 리포트·목록 발행 **이후**에 만든다 (PIPELINES §1 단계 순서: analyze → reports → input(daily)). dry-run 에서는 null.
+- idempotency: SECTION_REPORT 는 (type, `<date>:<section>`), DAILY_DIGEST 는 (type, date). Notion 은 (Date, Section) 조회로 같은 page 를 갱신하고 Read/Applied 는 보존한다.

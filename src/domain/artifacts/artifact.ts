@@ -4,6 +4,8 @@ import { canonicalJson, sha256Hex } from "../shared/ids.js";
 
 export const ARTIFACT_TYPES = [
   "DAILY_BRIEF",
+  "SECTION_REPORT",
+  "DAILY_DIGEST",
   "WEEKLY_REPORT",
   "TREND_REPORT",
   "ALERT",

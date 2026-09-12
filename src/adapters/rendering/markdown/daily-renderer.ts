@@ -21,10 +21,6 @@ function escapeLinkLabel(value: string): string {
   return value.replaceAll("[", "\\[").replaceAll("]", "\\]");
 }
 
-function wikiLink(value: string): string {
-  return `[[${value.replaceAll("]]", "").trim()}]]`;
-}
-
 function sourceLine(source: SourceRef): string {
   return `- [${escapeLinkLabel(source.title)}](${source.url})`;
 }
@@ -34,19 +30,14 @@ function text(value: string | null): string {
   return trimmed || EMPTY_TEXT;
 }
 
+/**
+ * Daily 의 항목은 짧게 유지한다. 긴 서술·인용·적용 방법은 섹션 상세 리포트가 담는다
+ * (사용자 요구 2026-09-13).
+ */
 function renderItem(item: BriefItem): string[] {
   const lines: string[] = [`### ${item.title}`, "", `**중요도:** ${item.importance}/5`, ""];
   lines.push("#### 무엇이 바뀌었나", text(item.whatChanged), "");
   lines.push("#### 왜 중요한가", text(item.whyItMatters), "");
-  if (item.howDevelopersUseIt) lines.push("#### 실제 개발자들은 어떻게 쓰나", item.howDevelopersUseIt, "");
-  if (item.howToApply) lines.push("#### 바로 적용하려면", item.howToApply, "");
-  lines.push("#### 관련 개념");
-  lines.push(
-    item.related.length > 0
-      ? item.related.map((related) => `- ${wikiLink(related)}`).join("\n")
-      : "- 등록된 관련 개념이 없습니다.",
-  );
-  lines.push("");
   lines.push("#### Sources");
   lines.push(
     item.sourceRefs.length > 0
@@ -92,6 +83,8 @@ export function renderDailyMarkdown(body: DailyBriefBody): string {
   }
   for (const section of body.sections) {
     lines.push(`## ${SECTION_TITLES_KO[section.kind]}`, "");
+    const reportUrl = section.report?.externalUrl;
+    if (reportUrl) lines.push(`[상세 리포트 →](${reportUrl})`, "");
     section.items.forEach((item, index) => {
       if (index > 0) lines.push("---", "");
       lines.push(...renderItem(item), "");
@@ -109,6 +102,9 @@ export function renderDailyMarkdown(body: DailyBriefBody): string {
   lines.push("## 내 환경에 적용할 후보", "");
   lines.push(renderApplyCandidates(body.applyCandidates, titleOf));
   lines.push("");
+
+  const digestUrl = body.digest?.externalUrl;
+  if (digestUrl) lines.push(`[오늘 들어온 이야기 전체 목록 →](${digestUrl})`, "");
 
   lines.push("## Sources", "");
   lines.push(

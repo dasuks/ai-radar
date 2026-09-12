@@ -49,7 +49,7 @@ test("정규화된 기존 제목을 찾아 갱신하고 같은 날짜 Evidence �
     [existingPath]: "# verification-loop\n\n사용자 메모\n",
   });
   const body = dailyBriefBody({
-    sections: [{ kind: "AI_CODING", items: [briefItem({ title: " Verification   Loop ", knowledgeType: "concept" })] }],
+    sections: [{ kind: "AI_CODING", items: [briefItem({ title: " Verification   Loop ", knowledgeType: "concept" })], report: null }],
   });
 
   await run(vault, body);
@@ -73,6 +73,7 @@ test("매핑되지 않은 종류는 Inbox 로 보내고 파일명 충돌 시 기
     sections: [
       {
         kind: "AI_CODING",
+        report: null,
         items: [briefItem({ title: "Agent: Review?", knowledgeType: "skill" as KnowledgeType, related: [] })],
       },
     ],
@@ -87,7 +88,7 @@ test("매핑되지 않은 종류는 Inbox 로 보내고 파일명 충돌 시 기
     selectKnowledgeItems(
       dailyBriefBody({
         sections: [
-          { kind: "AI_CODING", items: [briefItem({ knowledgeType: null }), briefItem({ id: "item_2", importance: 3 })] },
+          { kind: "AI_CODING", items: [briefItem({ knowledgeType: null }), briefItem({ id: "item_2", importance: 3 })], report: null },
         ],
       }),
     ),

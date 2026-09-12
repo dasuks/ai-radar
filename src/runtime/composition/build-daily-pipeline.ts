@@ -11,10 +11,13 @@ import {
   type RunDailyPipelineResult,
 } from "../../application/runs/run-daily-pipeline.js";
 import { NotionPublisher, type NotionClient } from "../../adapters/notion/notion-publisher.js";
+import { NotionReportsPublisher } from "../../adapters/notion/notion-reports-publisher.js";
 import { ObsidianDailyPublisher } from "../../adapters/obsidian/daily-publisher.js";
 import { ObsidianVault } from "../../adapters/obsidian/vault.js";
 import { MarkdownDailyRenderer } from "../../adapters/rendering/markdown/daily-renderer.js";
 import { NotionBlocksRenderer } from "../../adapters/rendering/notion-blocks/daily-renderer.js";
+import { NotionSectionReportRenderer } from "../../adapters/rendering/notion-blocks/section-report-renderer.js";
+import { NotionDigestRenderer } from "../../adapters/rendering/notion-blocks/digest-renderer.js";
 import { readJsonFile } from "../../adapters/storage/json-files/json-file.js";
 import { openSqliteStores } from "../../adapters/storage/sqlite/index.js";
 import { HackerNewsSource } from "../../adapters/sources/hackernews/index.js";
@@ -25,7 +28,7 @@ import type { SourceAdapter } from "../../ports/sources/source-adapter.js";
 import type { LlmProvider } from "../../ports/llm/llm-provider.js";
 import type { Stores } from "../../ports/storage/index.js";
 import { looksAiRelated } from "../../policies/classification/source-relevance.js";
-import { buildIntelligenceWiring } from "./intelligence-wiring.js";
+import { buildIntelligenceWiring, type ReportChannels } from "./intelligence-wiring.js";
 import { ConsoleLogger } from "../../adapters/system/logger.js";
 import { LogEventSink } from "../../adapters/system/event-sink.js";
 import { NodeRandom } from "../../adapters/system/random.js";
@@ -53,6 +56,8 @@ export interface DailyPipelineOverrides {
   notionClient?: NotionClient;
   notionPublisher?: Publisher;
   obsidianPublisher?: Publisher;
+  /** 리포트 발행 채널 교체 (테스트). null 을 주면 reports 단계가 SKIPPED 된다 */
+  reportChannels?: ReportChannels | null;
   /** 자동 Daily Brief 생성 훅 (Phase 3 에서 BuildDailyBrief 가 연결된다) */
   autoBrief?: Extract<BriefSource, { kind: "auto" }>["build"];
   readJson?: (filePath: string) => Promise<unknown>;
@@ -100,7 +105,6 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
       timeoutMs: config.llm.timeoutMs,
       logger: logger.child("codex"),
     });
-  const intelligence = buildIntelligenceWiring({ config, stores, sources, llm, http, clock, logger, events, random });
   const vault = overrides.vault ?? new ObsidianVault({ root: config.obsidian.vaultRoot, logger: logger.child("obsidian") });
 
   return {
@@ -108,6 +112,22 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
       const dryRun = options.dryRun ?? false;
       const date = options.date ?? calendarDateIn(config.timezone, clock.nowMs());
       const window: TimeWindow = trailingWindow(clock.nowMs(), config.sources.windowHours);
+      const reportChannels = resolveReportChannels(config, options, overrides, logger);
+      if (reportChannels === null && !options.skipNotion) {
+        logger.warn("NOTION_REPORTS_DATABASE_ID is not set; the reports stage is skipped and the daily brief gets no report links");
+      }
+      const intelligence = buildIntelligenceWiring({
+        config,
+        stores,
+        sources,
+        llm,
+        http,
+        clock,
+        logger,
+        events,
+        random,
+        reportChannels,
+      });
       const source = resolveBriefSource(options, overrides, intelligence.autoBrief);
 
       const channels: ChannelWiring[] = [];
@@ -141,7 +161,7 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
         });
       }
 
-      const autoStages = source.kind === "auto" && !overrides.stagesBefore ? ["collect", "normalize", "analyze"] : [];
+      const autoStages = source.kind === "auto" && !overrides.stagesBefore ? ["collect", "normalize", "analyze", "reports"] : [];
       const stageNames = [...autoStages, "input", ...channels.map((wiring) => `publish:${wiring.channel}`), "librarian"];
       const recorder = await JsonRunRecorder.start({
         store: runStore,
@@ -189,4 +209,31 @@ function resolveBriefSource(
 ): BriefSource {
   if (options.input) return { kind: "manual", filePath: options.input };
   return { kind: "auto", build: overrides.autoBrief ?? autoBrief };
+}
+
+/**
+ * 리포트 발행 채널 (INTEGRATIONS_AND_SAFETY.md §1.6).
+ * `NOTION_REPORTS_DATABASE_ID` 가 없거나 `--skip-notion` 이면 null 이고, reports 단계는 SKIPPED 된다.
+ */
+function resolveReportChannels(
+  config: AppConfig,
+  options: DailyRunOptions,
+  overrides: DailyPipelineOverrides,
+  logger: Logger,
+): ReportChannels | null {
+  if (overrides.reportChannels !== undefined) return overrides.reportChannels;
+  if (options.skipNotion) return null;
+  const reports = config.notion.reports;
+  if (!reports) return null;
+  const publisher = new NotionReportsPublisher({
+    token: config.notion.token,
+    databaseId: reports.databaseId,
+    dataSourceId: reports.dataSourceId,
+    allowSchemaFallback: config.notion.allowSchemaFallback,
+    logger: logger.child("notion-reports"),
+  });
+  return {
+    sectionReport: { renderer: new NotionSectionReportRenderer(), publisher },
+    digest: { renderer: new NotionDigestRenderer(), publisher },
+  };
 }

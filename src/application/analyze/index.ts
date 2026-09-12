@@ -32,5 +32,13 @@ export {
   MAX_EXCERPT_CHARS,
   type TextSpan,
 } from "./evidence-builder.js";
-export { CLASSIFY_POLICY_VERSION, CLASSIFY_PROMPT, EXTRACT_CLAIMS_PROMPT, WRITE_BRIEF_KO_PROMPT } from "./prompts/index.js";
+export {
+  CLASSIFY_POLICY_VERSION,
+  CLASSIFY_PROMPT,
+  EXTRACT_CLAIMS_PROMPT,
+  WRITE_BRIEF_KO_PROMPT,
+  WRITE_BRIEF_KO_V2_PROMPT,
+  WRITE_SECTION_REPORT_PROMPT,
+  WRITE_DIGEST_PROMPT,
+} from "./prompts/index.js";
 export { claimsByDocument } from "./support.js";

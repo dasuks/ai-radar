@@ -5,12 +5,19 @@
  * (우선순위·claim 매핑·fallback 본문·visibility·coverage·Artifact 봉투는 policies/application 에 있다).
  */
 import type { Artifact } from "../../domain/artifacts/artifact.js";
-import { DAILY_BRIEF_TITLE, type DailyBriefBody } from "../../domain/artifacts/daily-brief.js";
+import {
+  DAILY_BRIEF_TITLE,
+  type ArtifactLink,
+  type BriefSectionKind,
+  type DailyBriefBody,
+} from "../../domain/artifacts/daily-brief.js";
+import type { DailyDigestBody, SectionReportBody } from "../../domain/artifacts/section-report.js";
 import type { NormalizedDocument } from "../../domain/documents/normalized-document.js";
 import type { Entity } from "../../domain/entities/entity.js";
 import type { Claim } from "../../domain/evidence/claim.js";
 import type { Classification } from "../../domain/evidence/analysis.js";
 import type { LlmProvider } from "../../ports/llm/llm-provider.js";
+import type { Publisher, Renderer } from "../../ports/publishing/index.js";
 import type { SourceAdapter } from "../../ports/sources/source-adapter.js";
 import type { Stores } from "../../ports/storage/index.js";
 import type { Clock, EventSink, HttpClient, Logger, RandomSource } from "../../ports/system/index.js";
@@ -23,12 +30,30 @@ import {
   dailyBriefArtifact,
   type BriefCluster,
 } from "../../application/briefing/index.js";
+import {
+  BuildDailyDigest,
+  BuildSectionReports,
+  digestArtifact,
+  sectionReportArtifact,
+  type ReportEntryIndex,
+} from "../../application/reporting/index.js";
+import { publishArtifact } from "../../application/publish/index.js";
+import { DIGEST_BATCH_SIZE } from "../../application/analyze/prompts/index.js";
 import type { AutoBriefContext, DailyPipelineDeps, PipelineStage } from "../../application/runs/run-daily-pipeline.js";
 import { selectAnalysisCandidates } from "../../policies/classification/document-priority.js";
 import { artifactVisibility } from "../../policies/classification/visibility.js";
 import { cultureRankingPolicyV1 } from "../../policies/culture/v1.js";
 import { practicalRankingPolicyV1 } from "../../policies/practical/v1.js";
 import type { AppConfig } from "../config/app-config.js";
+
+/**
+ * 리포트 Artifact 를 내보내는 채널 (INTEGRATIONS_AND_SAFETY.md §1.6).
+ * null 이면 reports 단계는 SKIPPED 되고 Daily 는 링크 없이 발행된다.
+ */
+export interface ReportChannels {
+  sectionReport: { renderer: Renderer<SectionReportBody>; publisher: Publisher };
+  digest: { renderer: Renderer<DailyDigestBody>; publisher: Publisher };
+}
 
 export interface IntelligenceWiringDeps {
   config: AppConfig;
@@ -40,6 +65,8 @@ export interface IntelligenceWiringDeps {
   logger: Logger;
   events: EventSink;
   random: RandomSource;
+  /** 리포트 발행 채널. 없으면 reports 단계를 건너뛴다 */
+  reportChannels?: ReportChannels | null;
 }
 
 interface IntelState {
@@ -52,6 +79,11 @@ interface IntelState {
   entities: Entity[];
   analysisNotes: string[];
   analysisFailed: boolean;
+  llmCallsUsed: number;
+  sectionReports: SectionReportBody[];
+  entryIndex: ReportEntryIndex;
+  reportLinks: Map<BriefSectionKind, ArtifactLink>;
+  digestLink: ArtifactLink | null;
 }
 
 export interface IntelligenceWiring {
@@ -61,6 +93,7 @@ export interface IntelligenceWiring {
 
 export function buildIntelligenceWiring(deps: IntelligenceWiringDeps): IntelligenceWiring {
   const { config, stores, sources, llm, http, clock, logger, events, random } = deps;
+  const reportChannels = deps.reportChannels ?? null;
   const model = config.llm.model ?? "default";
   const state: IntelState = {
     summary: null,
@@ -72,8 +105,57 @@ export function buildIntelligenceWiring(deps: IntelligenceWiringDeps): Intellige
     entities: [],
     analysisNotes: [],
     analysisFailed: false,
+    llmCallsUsed: 0,
+    sectionReports: [],
+    entryIndex: new Map(),
+    reportLinks: new Map(),
+    digestLink: null,
   };
   const sourceIds = sources.map((s) => s.descriptor.id);
+
+  /** window 안의 cluster 대표 + 그 cluster 의 나머지 문서. 리포트/목록/Daily 가 같은 입력을 쓴다. */
+  const briefClusters = (): BriefCluster[] => {
+    const byId = new Map(state.documents.map((d) => [d.id, d]));
+    return state.representatives.map((rep) => ({
+      representative: rep,
+      members: (state.clusters.get(rep.id) ?? [])
+        .map((m) => byId.get(m))
+        .filter((d): d is NormalizedDocument => d !== undefined && d.id !== rep.id),
+    }));
+  };
+
+  /** Artifact 저장 → 발행 → ArtifactLink. dryRun 이거나 실패하면 externalUrl 은 null 이다. */
+  const storeAndPublish = async <TBody>(
+    ctx: { runId: string; dryRun: boolean },
+    args: {
+      artifact: Artifact<TBody>;
+      renderer: Renderer<TBody>;
+      publisher: Publisher;
+      recorder: DailyPipelineDeps["recorder"];
+    },
+  ): Promise<ArtifactLink> => {
+    const head = await stores.artifacts.head(args.artifact.type, args.artifact.targetKey);
+    const next: Artifact<TBody> = { ...args.artifact, revision: (head?.revision ?? 0) + 1 };
+    const stored = await stores.artifacts.putRevision(next);
+    const artifact = stored.revision === next.revision ? next : { ...next, revision: stored.revision };
+    const record = await publishArtifact({
+      artifact,
+      channel: args.renderer.channel,
+      renderer: args.renderer,
+      publisher: args.publisher,
+      artifactStore: stores.artifacts,
+      runId: ctx.runId,
+      dryRun: ctx.dryRun,
+      clock,
+      logger: logger.child("reports"),
+    });
+    await args.recorder.updateCounters((counters) => {
+      if (!counters.artifactsCreated.includes(artifact.id)) counters.artifactsCreated.push(artifact.id);
+      counters.publications.push(`${args.renderer.channel}:${record.status}`);
+    });
+    events.emit({ type: "ARTIFACT_CREATED", artifactId: artifact.id, revision: artifact.revision }, ctx.runId);
+    return { artifactId: artifact.id, externalUrl: record.externalUrl };
+  };
 
   const stagesBefore = (pipeline: DailyPipelineDeps): PipelineStage[] => [
     {
@@ -156,6 +238,7 @@ export function buildIntelligenceWiring(deps: IntelligenceWiringDeps): Intellige
         const entityIds = new Set(Object.values(extracted.entityIdsByDocument).flat());
         state.entities = (await Promise.all([...entityIds].map((id) => stores.entities.get(id)))).filter((e): e is Entity => e !== null);
         state.analysisNotes = [...classified.notes, ...extracted.notes];
+        state.llmCallsUsed = classified.llmCalls + extracted.llmCalls;
         await pipeline.recorder.addLlmUsage([...classified.usage, ...extracted.usage]);
         await pipeline.recorder.updateCounters((counters) => {
           counters.claimsCreated = extracted.claims.length;
@@ -174,17 +257,136 @@ export function buildIntelligenceWiring(deps: IntelligenceWiringDeps): Intellige
         logger.info(`analyze: ${extracted.claims.length} claims, ${extracted.rejectedItems} rejected, calls=${classified.llmCalls + extracted.llmCalls}`);
       },
     },
+    {
+      /**
+       * 리포트 단계 (PIPELINES_AND_POLICIES.md §11, ADR-0009).
+       * 섹션 상세 리포트 + 전체 목록을 만들고 발행해서 externalUrl 을 확보한 뒤 Daily 가 링크한다.
+       */
+      name: "reports",
+      enabled: () => reportChannels !== null && state.representatives.length > 0,
+      async run(ctx) {
+        if (!reportChannels) return;
+        const coverage = runCoverageSummary(state.summary, sourceIds);
+        const clusters = briefClusters();
+        const evidence = (
+          await Promise.all(
+            clusters.flatMap((cluster) =>
+              [cluster.representative, ...cluster.members].map((document) => stores.claims.evidenceOfDocument(document.id)),
+            ),
+          )
+        ).flat();
+
+        // 목록(digest)과 Daily 작문 몫을 먼저 떼어 두고 남은 예산을 섹션 리포트에 준다.
+        const remaining = Math.max(1, config.llm.maxCallsPerRun - state.llmCallsUsed);
+        const digestBatches = Math.max(1, Math.ceil(clusters.length / DIGEST_BATCH_SIZE));
+        const sectionBuilder = new BuildSectionReports({
+          llm,
+          model,
+          policies: [cultureRankingPolicyV1, practicalRankingPolicyV1],
+          clock,
+          logger: logger.child("reports"),
+        });
+        const built = await sectionBuilder.execute({
+          date: ctx.date,
+          window: ctx.window,
+          timezone: ctx.timezone,
+          runId: ctx.runId,
+          clusters,
+          classifications: state.classifications,
+          claimsByDocument: state.claimsByDocument,
+          evidence,
+          entities: state.entities,
+          documents: state.documents,
+          coverage,
+          maxCallsPerRun: Math.max(1, remaining - digestBatches - 1),
+        });
+        state.sectionReports = built.reports;
+        state.entryIndex = built.entryIndex;
+        state.llmCallsUsed += built.usage.length;
+        await pipeline.recorder.addLlmUsage(built.usage);
+
+        const digestBuilder = new BuildDailyDigest({ llm, model, clock, logger: logger.child("digest") });
+        const digest = await digestBuilder.execute({
+          date: ctx.date,
+          runId: ctx.runId,
+          clusters,
+          classifications: state.classifications,
+          claimsByDocument: state.claimsByDocument,
+          entryIndex: built.entryIndex,
+          coverage,
+          maxCallsPerRun: digestBatches,
+        });
+        state.llmCallsUsed += digest.usage.length;
+        await pipeline.recorder.addLlmUsage(digest.usage);
+
+        const visibility = artifactVisibility(Object.values(state.claimsByDocument).flat());
+        const claims = Object.values(state.claimsByDocument).flat();
+        const rankingPolicies = [cultureRankingPolicyV1, practicalRankingPolicyV1].map((policy) => ({
+          id: policy.id,
+          version: policy.version,
+        }));
+
+        for (const body of built.reports) {
+          const link = await storeAndPublish(ctx, {
+            artifact: sectionReportArtifact({
+              body,
+              inputs: {
+                claimIds: [...new Set(body.entries.flatMap((entry) => entry.claims.map((claim) => claim.claimId)))].sort(),
+                documentIds: [...new Set(body.sources.map((source) => source.documentId))].sort(),
+                signalRefs: [],
+                rankingPolicies,
+                runId: ctx.runId,
+              },
+              visibility,
+              timezone: ctx.timezone,
+              window: ctx.window,
+              createdAt: clock.nowIso(),
+            }),
+            renderer: reportChannels.sectionReport.renderer,
+            publisher: reportChannels.sectionReport.publisher,
+            recorder: pipeline.recorder,
+          });
+          state.reportLinks.set(body.section, link);
+        }
+
+        state.digestLink = await storeAndPublish(ctx, {
+          artifact: digestArtifact({
+            body: digest.body,
+            inputs: {
+              claimIds: [...new Set(claims.map((claim) => claim.id))].sort(),
+              documentIds: [...new Set(digest.body.stories.map((story) => story.documentId))].sort(),
+              signalRefs: [],
+              rankingPolicies,
+              runId: ctx.runId,
+            },
+            visibility,
+            timezone: ctx.timezone,
+            window: ctx.window,
+            createdAt: clock.nowIso(),
+          }),
+          renderer: reportChannels.digest.renderer,
+          publisher: reportChannels.digest.publisher,
+          recorder: pipeline.recorder,
+        });
+
+        for (const note of [...built.notes, ...digest.notes].slice(0, 10)) ctx.warnings.push(`reports: ${note}`);
+        logger.info(
+          `reports: ${built.reports.length} section report(s), ${built.entryIndex.size} entries, ${digest.body.stories.length} digest stories`,
+        );
+      },
+    },
   ];
 
   const autoBrief = async (ctx: AutoBriefContext): Promise<Artifact<DailyBriefBody>> => {
     const coverage = runCoverageSummary(state.summary, sourceIds);
     let body: DailyBriefBody;
     let inputs: Artifact<DailyBriefBody>["inputs"] = { claimIds: [], documentIds: state.documents.map((d) => d.id), signalRefs: [], rankingPolicies: [], runId: ctx.runId };
+    const hasReports = state.sectionReports.length > 0 && state.entryIndex.size > 0;
     const hasClaims = Object.keys(state.claimsByDocument).length > 0;
-    if (hasClaims) {
+    if (hasClaims || hasReports) {
       const byId = new Map(state.documents.map((d) => [d.id, d]));
       const clusters: BriefCluster[] = state.representatives
-        .filter((rep) => state.claimsByDocument[rep.id]?.length)
+        .filter((rep) => hasReports || state.claimsByDocument[rep.id]?.length)
         .map((rep) => ({
           representative: rep,
           members: (state.clusters.get(rep.id) ?? []).map((m) => byId.get(m)).filter((d): d is NormalizedDocument => d !== undefined && d.id !== rep.id),
@@ -202,6 +404,10 @@ export function buildIntelligenceWiring(deps: IntelligenceWiringDeps): Intellige
         entities: state.entities,
         evidence,
         coverage,
+        sectionReports: state.sectionReports,
+        entryIndex: state.entryIndex,
+        reportLinks: state.reportLinks,
+        digestLink: state.digestLink,
       });
       body = { ...result.body, title: DAILY_BRIEF_TITLE };
       inputs = { ...result.inputs, signalRefs: [] };

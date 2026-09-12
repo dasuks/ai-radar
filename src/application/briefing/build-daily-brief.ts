@@ -8,8 +8,10 @@
 import {
   BRIEF_SECTION_KINDS,
   DAILY_BRIEF_TITLE,
+  SECTION_TITLES_KO,
   dailyBriefViolations,
   type ApplyCandidate,
+  type ArtifactLink,
   type BriefItem,
   type BriefSection,
   type BriefSectionKind,
@@ -18,6 +20,7 @@ import {
   type RunCoverageSummary,
   type SourceRef,
 } from "../../domain/artifacts/daily-brief.js";
+import type { ReportEntry, SectionReportBody } from "../../domain/artifacts/section-report.js";
 import type { NormalizedDocument } from "../../domain/documents/normalized-document.js";
 import type { Classification } from "../../domain/evidence/analysis.js";
 import type { Claim } from "../../domain/evidence/claim.js";
@@ -31,6 +34,9 @@ import type { LlmProvider, LlmRequest } from "../../ports/llm/llm-provider.js";
 import type { Clock, Logger } from "../../ports/system/index.js";
 import type { RankingInput, RankingOutput, RankingPolicy } from "../../policies/ranking.js";
 import { WRITE_BRIEF_KO_PROMPT } from "../analyze/prompts/write-brief-ko.js";
+import { WRITE_BRIEF_KO_V2_PROMPT } from "../analyze/prompts/write-brief-ko-v2.js";
+// 타입 전용 import — 런타임 의존이 아니므로 reporting ↔ briefing 순환이 생기지 않는다.
+import type { ReportEntryIndex } from "../reporting/build-section-reports.js";
 import { asArray, isRecordValue, truncate, usageEntry } from "../analyze/support.js";
 import type { AnalyzeUsageEntry } from "../analyze/analyze-summary.js";
 
@@ -72,6 +78,15 @@ export interface BuildDailyBriefInput {
   coverage: RunCoverageSummary;
   maxItemsPerSection?: number;
   signal?: AbortSignal;
+  /**
+   * v2 경로 (ADR-0009): 섹션 리포트가 주어지면 Daily 는 리포트 항목에서 만들어진다.
+   * 비어 있으면 기존(랭킹 → claim) 경로를 쓴다.
+   */
+  sectionReports?: SectionReportBody[];
+  entryIndex?: ReportEntryIndex;
+  /** 섹션 → 그 섹션 리포트 Artifact 링크 (발행 후 externalUrl 포함) */
+  reportLinks?: Map<BriefSectionKind, ArtifactLink>;
+  digestLink?: ArtifactLink | null;
 }
 
 export interface BuildDailyBriefResult {
@@ -101,6 +116,9 @@ export class BuildDailyBrief {
   constructor(private readonly deps: BuildDailyBriefDeps) {}
 
   async execute(input: BuildDailyBriefInput): Promise<BuildDailyBriefResult> {
+    if (input.sectionReports && input.sectionReports.length > 0 && input.entryIndex) {
+      return this.executeFromReports(input, input.sectionReports, input.entryIndex);
+    }
     const notes: string[] = [];
     const maxItems = input.maxItemsPerSection ?? DEFAULT_MAX_ITEMS_PER_SECTION;
     const signal = input.signal ?? new AbortController().signal;
@@ -202,7 +220,7 @@ export class BuildDailyBrief {
         items.push({ ...skeleton, ...body });
       }
       if (items.length > 0) {
-        sections.push({ kind, items });
+        sections.push({ kind, items, report: null });
         finalItems.push(...items);
       }
     }
@@ -227,6 +245,7 @@ export class BuildDailyBrief {
       applyCandidates,
       sources,
       coverage: input.coverage,
+      digest: null,
     };
 
     const knownClaimIds = new Set<string>();
@@ -246,6 +265,125 @@ export class BuildDailyBrief {
       },
       usage,
       rejectedItems: written.rejected,
+      notes,
+    };
+  }
+
+  /**
+   * v2 경로 (ADR-0009, PIPELINES §11).
+   * item = ReportEntry (id 동일). whatChanged/whyItMatters 는 narrative 를 압축해 1회 LLM 호출로 쓴다.
+   * howToApply 는 리포트 항목에서 그대로 복사한다. oneMinuteSummary 는 섹션 overview 에서 만든다 (새 사실 없음).
+   */
+  private async executeFromReports(
+    input: BuildDailyBriefInput,
+    reports: readonly SectionReportBody[],
+    entryIndex: ReportEntryIndex,
+  ): Promise<BuildDailyBriefResult> {
+    const notes: string[] = [];
+    const signal = input.signal ?? new AbortController().signal;
+    const policyVersionOf = (id: string): string =>
+      this.deps.policies.find((policy) => policy.id === id)?.version ?? "1";
+
+    // 1) 항목마다 primary 섹션 하나 (Daily 에서 같은 id 가 두 번 나오면 계약 위반이다)
+    const skeletons: BriefItem[] = [];
+    const sectionOfItem = new Map<string, BriefSectionKind>();
+    const entryOfItem = new Map<string, ReportEntry>();
+    for (const [entryId, value] of entryIndex) {
+      const section = value.sections[0];
+      if (!section) continue;
+      skeletons.push(reportSkeleton(value.entry, section, policyVersionOf));
+      sectionOfItem.set(entryId, section);
+      entryOfItem.set(entryId, value.entry);
+    }
+
+    // 2) 한국어 짧은 본문 1회 호출
+    const usage: AnalyzeUsageEntry[] = [];
+    const written = new Map<string, WrittenItem>();
+    let rejected = 0;
+    if (skeletons.length > 0) {
+      const request: LlmRequest = {
+        task: "WRITE_BRIEF_KO",
+        promptId: WRITE_BRIEF_KO_V2_PROMPT.promptId,
+        promptVersion: WRITE_BRIEF_KO_V2_PROMPT.promptVersion,
+        system: WRITE_BRIEF_KO_V2_PROMPT.system,
+        untrusted: skeletons.map((item) => ({ id: item.id, text: entryBriefBlock(entryOfItem.get(item.id)!) })),
+        outputSchema: WRITE_BRIEF_KO_V2_PROMPT.outputSchema,
+        maxOutputTokens: WRITE_BRIEF_KO_V2_PROMPT.maxOutputTokens,
+        temperature: WRITE_BRIEF_KO_V2_PROMPT.temperature,
+      };
+      const response = await this.deps.llm.complete(request, this.deps.model, signal);
+      usage.push(usageEntry(response));
+      const parsed = parseWriteBriefOutput(response.json, skeletons);
+      notes.push(...parsed.notes);
+      rejected = parsed.rejected;
+      for (const [id, item] of parsed.items) written.set(id, item);
+      this.deps.logger?.info("daily brief written from reports", {
+        provider: response.provider,
+        model: response.model,
+        items: written.size,
+        entries: skeletons.length,
+      });
+    }
+
+    // 3) 섹션 구성. LLM 이 쓰지 않은 항목은 리포트 항목의 문장으로 채운다 (이야기를 잃지 않는다).
+    const sections: BriefSection[] = [];
+    const finalItems: BriefItem[] = [];
+    for (const kind of BRIEF_SECTION_KINDS) {
+      const items: BriefItem[] = [];
+      for (const skeleton of skeletons) {
+        if (sectionOfItem.get(skeleton.id) !== kind) continue;
+        const entry = entryOfItem.get(skeleton.id)!;
+        const body = written.get(skeleton.id);
+        if (!body) notes.push(`item ${skeleton.id} fell back to the report entry text`);
+        items.push(mergeWrittenIntoEntryItem(skeleton, entry, body ?? null));
+      }
+      if (items.length === 0) continue;
+      sections.push({ kind, items, report: input.reportLinks?.get(kind) ?? null });
+      finalItems.push(...items);
+    }
+    for (const report of reports) {
+      if (!sections.some((section) => section.kind === report.section)) {
+        notes.push(`section ${report.section} has a report but no daily item (every entry belongs to another section)`);
+      }
+    }
+
+    const practicalItems = finalItems
+      .filter((item) => item.rankingTrace.policyId === "ranking.practical")
+      .sort((a, b) => b.importance - a.importance);
+    const learnOneThing = practicalItems[0] ?? finalItems.slice().sort((a, b) => b.importance - a.importance)[0] ?? null;
+    const applyCandidates: ApplyCandidate[] = finalItems
+      .filter((item) => item.howToApply !== null && item.howToApply.trim() !== "")
+      .map((item) => ({ itemId: item.id, action: item.howToApply!, effort: "M", prerequisites: [] }));
+
+    const body: DailyBriefBody = {
+      bodySchemaVersion: 2,
+      date: input.date,
+      title: DAILY_BRIEF_TITLE,
+      oneMinuteSummary: oneMinuteSummaryFromOverviews(reports),
+      sections,
+      learnOneThing,
+      applyCandidates,
+      sources: unionSources(finalItems),
+      coverage: input.coverage,
+      digest: input.digestLink ?? null,
+    };
+
+    const knownClaimIds = new Set<string>();
+    for (const claims of Object.values(input.claimsByDocument)) for (const claim of claims) knownClaimIds.add(claim.id);
+    for (const entry of entryOfItem.values()) for (const claim of entry.claims) knownClaimIds.add(claim.claimId);
+    const violations = dailyBriefViolations(body, knownClaimIds);
+    if (violations.length > 0) throw new ContractValidationError("DailyBriefBody", violations);
+
+    return {
+      body,
+      inputs: {
+        claimIds: [...new Set(finalItems.flatMap((item) => item.claimIds))].sort(),
+        documentIds: [...new Set(finalItems.flatMap((item) => item.sourceRefs.map((source) => source.documentId)))].sort(),
+        rankingPolicies: this.deps.policies.map((policy) => ({ id: policy.id, version: policy.version })),
+        runId: input.runId,
+      },
+      usage,
+      rejectedItems: rejected,
       notes,
     };
   }
@@ -500,4 +638,83 @@ function importanceOf(value: unknown): 1 | 2 | 3 | 4 | 5 {
   const rounded = Math.round(value);
   const clamped = rounded < 1 ? 1 : rounded > 5 ? 5 : rounded;
   return clamped as 1 | 2 | 3 | 4 | 5;
+}
+
+// --- v2 (리포트 기반) 헬퍼 -------------------------------------------------
+
+/** CULTURE 는 culture 정책, 나머지 실무 섹션은 practical 정책에서 왔다 (learnOneThing 판정과 일관되게). */
+export function reportSkeleton(
+  entry: ReportEntry,
+  section: BriefSectionKind,
+  policyVersionOf: (id: string) => string,
+): BriefItem {
+  const policyId = section === "CULTURE" ? "ranking.culture" : "ranking.practical";
+  return {
+    id: entry.id,
+    title: entry.title,
+    importance: entry.importance,
+    whatChanged: "",
+    whyItMatters: "",
+    howDevelopersUseIt: null,
+    howToApply: entry.howToApply,
+    claimIds: entry.claims.map((claim) => claim.claimId).sort(),
+    entityIds: [...new Set(entry.entities.map((e) => e.entityId).filter((id): id is string => id !== null))].sort(),
+    trend: null,
+    sourceRefs: entry.sourceRefs,
+    rankingTrace: {
+      policyId,
+      policyVersion: policyVersionOf(policyId),
+      score: entry.importance / 5,
+      reasons: [`${SECTION_TITLES_KO[section]} 상세 리포트 항목`],
+    },
+    knowledgeType: null,
+    related: [],
+  };
+}
+
+/** 리포트 항목 하나의 비신뢰 블록: narrative 와 whyItMatters, 그리고 인용 가능한 claim id. */
+export function entryBriefBlock(entry: ReportEntry): string {
+  const lines: string[] = [`title: ${entry.title}`];
+  for (const claim of entry.claims) lines.push(`<claim id="${claim.claimId}">${claim.statement}</claim>`);
+  lines.push("<narrative>", ...entry.narrative, "</narrative>");
+  lines.push(`<whyItMatters>${entry.whyItMatters}</whyItMatters>`);
+  if (entry.howToApply) lines.push(`<howToApply>${entry.howToApply}</howToApply>`);
+  return lines.join("\n");
+}
+
+/** LLM 이 항목을 건너뛰었으면 리포트 항목의 문장을 그대로 쓴다 (Daily 에서 이야기를 잃지 않는다). */
+export function mergeWrittenIntoEntryItem(
+  skeleton: BriefItem,
+  entry: ReportEntry,
+  written: WrittenItem | null,
+): BriefItem {
+  if (!written) {
+    return {
+      ...skeleton,
+      whatChanged: entry.narrative[0] ?? entry.whyItMatters,
+      whyItMatters: entry.whyItMatters,
+    };
+  }
+  return {
+    ...skeleton,
+    title: written.title || skeleton.title,
+    importance: written.importance,
+    whatChanged: written.whatChanged,
+    whyItMatters: written.whyItMatters,
+    howDevelopersUseIt: written.howDevelopersUseIt,
+    // howToApply 는 리포트 항목에서 복사한다. LLM 이 새로 만들지 않는다.
+    howToApply: skeleton.howToApply,
+    claimIds: written.claimIds.length > 0 ? written.claimIds : skeleton.claimIds,
+  };
+}
+
+/** oneMinuteSummary 는 섹션 overview 에서 만든다 (새 사실 도입 금지). */
+export function oneMinuteSummaryFromOverviews(reports: readonly SectionReportBody[]): string[] {
+  const out: string[] = [];
+  for (const report of reports) {
+    const first = report.overview.find((line) => line.trim().length > 0);
+    if (first) out.push(first.trim());
+    if (out.length >= MAX_SUMMARY_SENTENCES) break;
+  }
+  return out;
 }

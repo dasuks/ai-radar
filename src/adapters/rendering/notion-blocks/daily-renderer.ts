@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { BlockObjectRequest, CreatePageParameters } from "@notionhq/client";
+import type { BlockObjectRequest } from "@notionhq/client";
 import type { Artifact } from "../../../domain/artifacts/artifact.js";
 import {
   SECTION_TITLES_KO,
@@ -8,80 +8,28 @@ import {
   type SourceRef,
 } from "../../../domain/artifacts/daily-brief.js";
 import type { Rendered, Renderer } from "../../../ports/publishing/index.js";
+import {
+  divider,
+  linkedListItem,
+  revisionCallout,
+  safeLinkUrl,
+  textBlocks,
+  titleRichText,
+  truncateWithoutBreakingSurrogate,
+  type NotionPageProperties,
+  type NotionRenderedPayload,
+} from "./blocks.js";
 
-const RICH_TEXT_LIMIT = 2_000;
-const RICH_TEXT_ITEMS_LIMIT = 100;
 const MULTI_SELECT_NAME_LIMIT = 100;
 const MULTI_SELECT_OPTIONS_LIMIT = 100;
-const EMPTY_TEXT = "내용 없음";
 
-export type NotionPageProperties = NonNullable<CreatePageParameters["properties"]>;
-
-/**
- * NotionPublisher 가 해석하는 payload.
- * adapter 간 import 가 금지되므로(ARCH-06) `adapters/notion` 은 같은 형태를 직접 선언한다.
- */
-export interface NotionRenderedPayload {
-  properties: NotionPageProperties;
-  blocks: BlockObjectRequest[];
-}
-
-type TextBlockType = "paragraph" | "heading_1" | "heading_2" | "heading_3" | "bulleted_list_item";
-
-/** Notion rich text 2000자 제한. surrogate pair 를 쪼개지 않는다. */
-export function splitText(value: string, limit = RICH_TEXT_LIMIT): string[] {
-  const text = value || EMPTY_TEXT;
-  const chunks: string[] = [];
-  let start = 0;
-  while (start < text.length) {
-    let end = Math.min(start + limit, text.length);
-    const lastCodeUnit = text.charCodeAt(end - 1);
-    if (end < text.length && lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) end -= 1;
-    chunks.push(text.slice(start, end));
-    start = end;
-  }
-  return chunks;
-}
-
-function richText(content: string, url?: string) {
-  return [{ type: "text" as const, text: url ? { content, link: { url } } : { content } }];
-}
-
-function textBlock(type: TextBlockType, content: string, url?: string): BlockObjectRequest {
-  const blockContent = { rich_text: richText(content, url) };
-  switch (type) {
-    case "heading_1":
-      return { object: "block", type, heading_1: blockContent };
-    case "heading_2":
-      return { object: "block", type, heading_2: blockContent };
-    case "heading_3":
-      return { object: "block", type, heading_3: blockContent };
-    case "bulleted_list_item":
-      return { object: "block", type, bulleted_list_item: blockContent };
-    case "paragraph":
-      return { object: "block", type, paragraph: blockContent };
-  }
-}
-
-function textBlocks(type: TextBlockType, content: string, url?: string): BlockObjectRequest[] {
-  return splitText(content).map((chunk, index) => textBlock(index === 0 ? type : "paragraph", chunk, url));
-}
-
-function titleRichText(title: string) {
-  const chunks = splitText(title);
-  if (chunks.length > RICH_TEXT_ITEMS_LIMIT) {
-    throw new Error(`Daily Brief title exceeds Notion's ${RICH_TEXT_ITEMS_LIMIT * RICH_TEXT_LIMIT}-character limit`);
-  }
-  return chunks.flatMap((chunk) => richText(chunk));
-}
-
-export function truncateWithoutBreakingSurrogate(value: string, limit: number): string {
-  if (value.length <= limit) return value;
-  let end = limit;
-  const lastCodeUnit = value.charCodeAt(end - 1);
-  if (lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff) end -= 1;
-  return value.slice(0, end);
-}
+export {
+  revisionCallout,
+  splitText,
+  truncateWithoutBreakingSurrogate,
+  type NotionPageProperties,
+  type NotionRenderedPayload,
+} from "./blocks.js";
 
 function topicNames(items: BriefItem[]): string[] {
   const unique = new Set<string>();
@@ -92,43 +40,25 @@ function topicNames(items: BriefItem[]): string[] {
   return [...unique];
 }
 
-/** 부분 실패 상태를 사람이 식별할 수 있게 하는 revision callout (INTEGRATIONS §1.3 item 3). */
-export function revisionCallout(revision: number): BlockObjectRequest {
-  return {
-    object: "block",
-    type: "callout",
-    callout: { rich_text: richText(`ai-radar:revision:${revision}`) },
-  };
-}
-
 function sourceBlocks(source: SourceRef): BlockObjectRequest[] {
-  const safeUrl = source.url.length <= RICH_TEXT_LIMIT ? source.url : undefined;
-  const blocks = textBlocks("bulleted_list_item", source.title, safeUrl);
-  if (!safeUrl) blocks.push(...textBlocks("paragraph", source.url));
-  return blocks;
+  return linkedListItem(source.title, source.url);
 }
 
+/**
+ * Daily 의 항목은 짧게 유지한다. 긴 서술·인용·적용 방법은 섹션 상세 리포트가 담는다
+ * (사용자 요구 2026-09-13).
+ */
 function itemBlocks(item: BriefItem): BlockObjectRequest[] {
   const blocks: BlockObjectRequest[] = [
-    { object: "block", type: "divider", divider: {} },
+    divider(),
     ...textBlocks("heading_2", item.title),
     ...textBlocks("paragraph", `중요도: ${item.importance}/5`),
     ...textBlocks("heading_3", "무엇이 바뀌었나"),
     ...textBlocks("paragraph", item.whatChanged),
     ...textBlocks("heading_3", "왜 중요한가"),
     ...textBlocks("paragraph", item.whyItMatters),
+    ...textBlocks("heading_3", "Sources"),
   ];
-  if (item.howDevelopersUseIt) {
-    blocks.push(...textBlocks("heading_3", "실제 개발자들은 어떻게 쓰나"), ...textBlocks("paragraph", item.howDevelopersUseIt));
-  }
-  if (item.howToApply) {
-    blocks.push(...textBlocks("heading_3", "바로 적용하려면"), ...textBlocks("paragraph", item.howToApply));
-  }
-  blocks.push(...textBlocks("heading_3", "관련 개념"));
-  if (item.related.length === 0) blocks.push(...textBlocks("paragraph", "등록된 관련 개념이 없습니다."));
-  else for (const related of item.related) blocks.push(...textBlocks("bulleted_list_item", related));
-
-  blocks.push(...textBlocks("heading_3", "Sources"));
   if (item.sourceRefs.length === 0) blocks.push(...textBlocks("paragraph", "등록된 출처가 없습니다."));
   else for (const source of item.sourceRefs) blocks.push(...sourceBlocks(source));
   return blocks;
@@ -150,6 +80,8 @@ export function buildNotionBlocks(body: DailyBriefBody, revision: number): Block
   const items: BriefItem[] = [];
   for (const section of body.sections) {
     blocks.push(...textBlocks("heading_1", SECTION_TITLES_KO[section.kind]));
+    const reportUrl = safeLinkUrl(section.report?.externalUrl);
+    if (reportUrl) blocks.push(...textBlocks("paragraph", "상세 리포트 →", reportUrl));
     for (const item of section.items) {
       items.push(item);
       blocks.push(...itemBlocks(item));
@@ -171,6 +103,9 @@ export function buildNotionBlocks(body: DailyBriefBody, revision: number): Block
       const title = items.find((item) => item.id === candidate.itemId)?.title ?? candidate.itemId;
       blocks.push(...textBlocks("bulleted_list_item", `${title} (${candidate.effort}): ${candidate.action}`));
     }
+
+  const digestUrl = safeLinkUrl(body.digest?.externalUrl);
+  if (digestUrl) blocks.push(...textBlocks("paragraph", "오늘 들어온 이야기 전체 목록 →", digestUrl));
 
   blocks.push(...textBlocks("heading_1", "Sources"));
   if (body.sources.length === 0) blocks.push(...textBlocks("paragraph", "등록된 출처가 없습니다."));

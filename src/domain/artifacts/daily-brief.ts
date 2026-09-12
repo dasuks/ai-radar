@@ -1,4 +1,5 @@
 import type { DerivedSignalRef } from "../metrics/derived-signal.js";
+
 import { Issues, isRecord, requireString, stringArray } from "../shared/validation.js";
 import { isValidCalendarDate } from "../shared/time.js";
 
@@ -54,9 +55,17 @@ export interface BriefItem {
   related: string[];
 }
 
+/** 다른 Artifact(섹션 리포트, 전체 목록)로의 참조. externalUrl 은 발행 후 채워진다 */
+export interface ArtifactLink {
+  artifactId: string;
+  externalUrl: string | null;
+}
+
 export interface BriefSection {
   kind: BriefSectionKind;
   items: BriefItem[];
+  /** 이 섹션의 상세 리포트 (없으면 null) */
+  report: ArtifactLink | null;
 }
 
 export interface ApplyCandidate {
@@ -84,6 +93,8 @@ export interface DailyBriefBody {
   applyCandidates: ApplyCandidate[];
   sources: SourceRef[];
   coverage: RunCoverageSummary;
+  /** 오늘 들어온 이야기 전체 목록 (없으면 null) */
+  digest: ArtifactLink | null;
 }
 
 export function allItems(body: DailyBriefBody): BriefItem[] {
@@ -139,5 +150,6 @@ export function parseDailyBriefBody(value: unknown): DailyBriefBody {
     applyCandidates: Array.isArray(obj.applyCandidates) ? (obj.applyCandidates as ApplyCandidate[]) : [],
     sources: obj.sources as SourceRef[],
     coverage: obj.coverage as RunCoverageSummary,
+    digest: isRecord(obj.digest) ? (obj.digest as unknown as ArtifactLink) : null,
   };
 }

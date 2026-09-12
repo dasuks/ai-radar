@@ -42,13 +42,14 @@ export function dailyBriefBody(overrides: Partial<DailyBriefBody> = {}): DailyBr
     date: "2026-09-12",
     title: DAILY_BRIEF_TITLE,
     oneMinuteSummary: ["핵심 요약"],
-    sections: [{ kind: "AI_CODING", items }],
+    sections: [{ kind: "AI_CODING", items, report: null }],
     learnOneThing: first,
     applyCandidates: first?.howToApply
       ? [{ itemId: first.id, action: first.howToApply, effort: "M", prerequisites: [] }]
       : [],
     sources: items.flatMap((item) => item.sourceRefs),
     coverage: { sourcesAttempted: ["manual-json"], sourcesFailed: [], partial: false, note: null },
+    digest: null,
     ...overrides,
   };
 }

@@ -32,5 +32,6 @@ export function buildUnverifiedBrief(input: UnverifiedBriefInput): DailyBriefBod
     applyCandidates: [],
     sources: [],
     coverage: input.coverage,
+    digest: null,
   };
 }

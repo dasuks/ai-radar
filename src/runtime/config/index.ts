@@ -14,6 +14,7 @@ export {
   type AppConfig,
   type LoadConfigOptions,
   type NotionConfig,
+  type NotionReportsConfig,
   type ObsidianConfig,
   type SourcesConfig,
   type RssFeedConfig,
