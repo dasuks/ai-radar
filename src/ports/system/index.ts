@@ -21,7 +21,7 @@ export interface HttpResponse {
 
 export interface HttpRequest {
   url: string;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PATCH";
   headers?: Record<string, string>;
   body?: string;
   timeoutMs?: number;

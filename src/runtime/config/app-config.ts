@@ -3,6 +3,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
 import { isRecord } from "../../domain/shared/validation.js";
+import { loadDiscordConfig, discordSecrets, type DiscordConfig } from "./discord-config.js";
 
 export const DEFAULT_OBSIDIAN_VAULT = "C:\\dev\\knowledge\\ai-knowledge";
 export const DEFAULT_TIMEZONE = "Asia/Seoul";
@@ -70,7 +71,9 @@ export interface RssFeedConfig {
 }
 
 export interface SourcesConfig {
+  githubTrending?: boolean;
   rssFeeds: RssFeedConfig[];
+  threads?: { username: string; accessToken?: string }[];
   hackerNews: { enabled: boolean; maxItems: number };
   windowHours: number;
 }
@@ -94,6 +97,7 @@ export interface AppConfig {
   timezone: string;
   llm: LlmConfig;
   sources: SourcesConfig;
+  discord?: DiscordConfig | null;
   /** 로그·오류 메시지에서 마스킹할 secret 값 목록 */
   redaction: string[];
 }
@@ -148,8 +152,12 @@ function positiveInteger(raw: string | undefined, fallback: number, name: string
 
 /** `<projectRoot>/config/sources.json` 이 있으면 읽는다. 없으면 빈 목록. */
 export function loadRssFeeds(projectRoot: string): RssFeedConfig[] {
+  return parseRssFeeds(readSourcesFile(projectRoot));
+}
+
+function readSourcesFile(projectRoot: string): unknown {
   const filePath = join(projectRoot, "config", "sources.json");
-  if (!existsSync(filePath)) return [];
+  if (!existsSync(filePath)) return { feeds: [] };
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
@@ -157,9 +165,13 @@ export function loadRssFeeds(projectRoot: string): RssFeedConfig[] {
     const message = error instanceof Error ? error.message : String(error);
     throw new ConfigError(`config/sources.json contains malformed JSON (${filePath}): ${message}`);
   }
+  return parsed;
+}
+
+function parseRssFeeds(parsed: unknown): RssFeedConfig[] {
   const rawFeeds = Array.isArray(parsed) ? parsed : isRecord(parsed) ? parsed.feeds : undefined;
   if (!Array.isArray(rawFeeds)) {
-    throw new ConfigError(`config/sources.json must contain a "feeds" array (${filePath})`);
+    throw new ConfigError('config/sources.json must contain a "feeds" array');
   }
   const feeds: RssFeedConfig[] = [];
   rawFeeds.forEach((raw, index) => {
@@ -173,6 +185,21 @@ export function loadRssFeeds(projectRoot: string): RssFeedConfig[] {
     feeds.push(raw.unverified === true ? { id, name, url, unverified: true } : { id, name, url });
   });
   return feeds;
+}
+
+function parseThreadsProfiles(parsed: unknown, accessToken: string | undefined): NonNullable<SourcesConfig["threads"]> {
+  const profiles = isRecord(parsed) ? parsed.threads ?? [] : [];
+  if (!Array.isArray(profiles)) throw new ConfigError("config/sources.json threads must be an array");
+  const seen = new Set<string>();
+  return profiles.map((profile) => {
+    if (!isRecord(profile) || typeof profile.username !== "string" || !/^[A-Za-z0-9_.]{1,30}$/.test(profile.username)) {
+      throw new ConfigError("Threads profiles require a valid username");
+    }
+    const username = profile.username.toLowerCase();
+    if (seen.has(username)) throw new ConfigError("Duplicate Threads profile");
+    seen.add(username);
+    return { username, ...(accessToken ? { accessToken } : {}) };
+  });
 }
 
 function dotenvIntoProcessEnv(): NodeJS.ProcessEnv {
@@ -223,6 +250,7 @@ export function loadConfig(
   };
 
   const storeDir = resolve(trimmed(env.AI_RADAR_STORE_DIR) || join(projectRoot, "data", "store"));
+  const discord = loadDiscordConfig(storeDir);
 
   const llm: LlmConfig = {
     provider: trimmed(env.AI_RADAR_LLM_PROVIDER) || DEFAULT_LLM_PROVIDER,
@@ -233,8 +261,12 @@ export function loadConfig(
     timeoutMs: positiveInteger(env.AI_RADAR_LLM_TIMEOUT_MS, 240_000, "AI_RADAR_LLM_TIMEOUT_MS"),
   };
 
+  const sourceFile = readSourcesFile(projectRoot);
+  const threadsAccessToken = optionalEnvironmentValue(env, "THREADS_ACCESS_TOKEN");
   const sources: SourcesConfig = {
-    rssFeeds: loadRssFeeds(projectRoot),
+    githubTrending: isRecord(sourceFile) && sourceFile.githubTrending === true,
+    rssFeeds: parseRssFeeds(sourceFile),
+    threads: parseThreadsProfiles(sourceFile, threadsAccessToken),
     hackerNews: {
       enabled: trimmed(env.AI_RADAR_HACKERNEWS_ENABLED) !== "false",
       maxItems: positiveInteger(env.AI_RADAR_HACKERNEWS_MAX_ITEMS, DEFAULT_HN_MAX_ITEMS, "AI_RADAR_HACKERNEWS_MAX_ITEMS"),
@@ -242,7 +274,7 @@ export function loadConfig(
     windowHours: positiveInteger(env.AI_RADAR_WINDOW_HOURS, DEFAULT_WINDOW_HOURS, "AI_RADAR_WINDOW_HOURS"),
   };
 
-  const redaction = [token, databaseId, dataSourceId ?? "", reportsDatabaseId ?? "", reportsDataSourceId ?? "", vaultRoot].filter(
+  const redaction = [...discordSecrets(discord), threadsAccessToken ?? "", token, databaseId, dataSourceId ?? "", reportsDatabaseId ?? "", reportsDataSourceId ?? "", vaultRoot].filter(
     (value) => value.length > 0,
   );
 
@@ -254,6 +286,7 @@ export function loadConfig(
     timezone: trimmed(env.AI_RADAR_TIMEZONE) || DEFAULT_TIMEZONE,
     llm,
     sources,
+    discord,
     redaction,
   };
 }

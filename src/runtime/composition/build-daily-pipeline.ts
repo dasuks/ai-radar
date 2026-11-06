@@ -22,6 +22,8 @@ import { readJsonFile } from "../../adapters/storage/json-files/json-file.js";
 import { openSqliteStores } from "../../adapters/storage/sqlite/index.js";
 import { HackerNewsSource } from "../../adapters/sources/hackernews/index.js";
 import { createRssSources } from "../../adapters/sources/rss/index.js";
+import { ThreadsSource } from "../../adapters/sources/threads/index.js";
+import { GithubTrendingSource } from "../../adapters/sources/github-trending/index.js";
 import { CodexCliProvider } from "../../adapters/llm/codex-cli/index.js";
 import { FetchHttpClient } from "../../adapters/system/http-client.js";
 import type { SourceAdapter } from "../../ports/sources/source-adapter.js";
@@ -35,6 +37,10 @@ import { NodeRandom } from "../../adapters/system/random.js";
 import { SystemClock } from "../../adapters/system/clock.js";
 import { JsonRunRecorder } from "../runs/run-recorder.js";
 import type { AppConfig } from "../config/app-config.js";
+import { discordPublisher } from "./discord-wiring.js";
+import { discordStage } from "../../application/discord/publish-discord-edition.js";
+import { DiscordEditionRenderer } from "../../adapters/rendering/discord/edition-renderer.js";
+import { withDiscordLock } from "../runs/discord-lock.js";
 
 export interface DailyRunOptions {
   /** YYYY-MM-DD. 생략하면 config.timezone 기준 오늘 */
@@ -45,6 +51,7 @@ export interface DailyRunOptions {
   skipNotion?: boolean;
   skipObsidian?: boolean;
   skipLibrarian?: boolean;
+  skipDiscord?: boolean;
 }
 
 export interface DailyPipelineOverrides {
@@ -70,6 +77,7 @@ export interface DailyPipelineOverrides {
   /** LLM 교체 (테스트: FakeLlmProvider) */
   llm?: LlmProvider;
   http?: HttpClient;
+  discordPublisher?: Publisher;
 }
 
 export interface DailyPipeline {
@@ -96,6 +104,8 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
     [
       ...(config.sources.hackerNews.enabled ? [new HackerNewsSource({ isRelevant: looksAiRelated })] : []),
       ...createRssSources(config.sources.rssFeeds.map(({ id, name, url }) => ({ id, name, url }))),
+      ...(config.sources.threads ?? []).map((profile) => new ThreadsSource(profile)),
+      ...(config.sources.githubTrending ? [new GithubTrendingSource(looksAiRelated)] : []),
     ];
   const llm: LlmProvider =
     overrides.llm ??
@@ -164,7 +174,8 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
       }
 
       const autoStages = source.kind === "auto" && !overrides.stagesBefore ? ["collect", "normalize", "analyze", "reports"] : [];
-      const stageNames = [...autoStages, "input", ...channels.map((wiring) => `publish:${wiring.channel}`), "librarian"];
+      const useDiscord = Boolean(config.discord) && !options.skipDiscord && source.kind === "auto";
+      const stageNames = [...autoStages, "input", ...channels.map((wiring) => `publish:${wiring.channel}`), "librarian", ...(useDiscord ? ["publish:discord"] : [])];
       const recorder = await JsonRunRecorder.start({
         store: runStore,
         clock,
@@ -191,12 +202,19 @@ export function buildDailyPipeline(config: AppConfig, overrides: DailyPipelineOv
       };
 
       const extra = overrides.stagesBefore?.(deps) ?? (source.kind === "auto" ? intelligence.stagesBefore(deps) : []);
+      const stages = [...extra, ...buildDailyStages(deps)];
+      if (useDiscord && config.discord) {
+        const stage = discordStage({ pipeline: deps, stores, llm, renderer: new DiscordEditionRenderer(), model: config.llm.model ?? "default", clock,
+          allowedSourceIds: sources.map((source) => source.descriptor.id),
+          logger: logger.child("discord"), publisher: overrides.discordPublisher ?? discordPublisher(config.discord, stores, clock, http, logger.child("discord")) });
+        stages.push({ ...stage, run: (ctx) => ctx.dryRun ? stage.run(ctx) : withDiscordLock(config.store.dir, () => stage.run(ctx)) });
+      }
       const result = await runDailyPipeline(deps, {
         date,
         window,
         timezone: config.timezone,
         dryRun,
-        ...(extra.length > 0 ? { stages: [...extra, ...buildDailyStages(deps)] } : {}),
+        stages,
       });
       await recorder.finish(result.status);
       return result;

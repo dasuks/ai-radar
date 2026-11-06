@@ -1,6 +1,33 @@
 {
   "schemaVersion": 1,
+  "githubTrending": true,
+  "threads": [{ "username": "choi.openai" }],
   "feeds": [
+    {
+      "id": "reddit-ai-top-day",
+      "name": "Reddit daily top: ClaudeCode, codex, LocalLLaMA, MachineLearning (temporary through 2026-11-12; no vote totals)",
+      "url": "https://www.reddit.com/r/ClaudeCode+codex+LocalLLaMA+MachineLearning/top/.rss?t=day&limit=20"
+    },
+    {
+      "id": "codex-releases",
+      "name": "OpenAI Codex official releases",
+      "url": "https://github.com/openai/codex/releases.atom"
+    },
+    {
+      "id": "claude-code-releases",
+      "name": "Claude Code official releases",
+      "url": "https://github.com/anthropics/claude-code/releases.atom"
+    },
+    {
+      "id": "vercel-ai-releases",
+      "name": "Vercel AI SDK official releases",
+      "url": "https://github.com/vercel/ai/releases.atom"
+    },
+    {
+      "id": "openai-agents-releases",
+      "name": "OpenAI Agents SDK official releases",
+      "url": "https://github.com/openai/openai-agents-python/releases.atom"
+    },
     {
       "id": "openai-news",
       "name": "OpenAI News",

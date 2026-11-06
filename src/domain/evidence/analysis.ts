@@ -10,6 +10,7 @@ export const ANALYSIS_TASKS = [
   // 2026-09-13 리포트 계층 (ADR-0009). LlmRequest.task 가 AnalysisTask 이므로 새 작문 task 를 여기에 등록한다.
   "WRITE_SECTION_REPORT",
   "WRITE_DIGEST",
+  "WRITE_DISCORD",
   "PROPOSE_KNOWLEDGE",
 ] as const;
 export type AnalysisTask = (typeof ANALYSIS_TASKS)[number];

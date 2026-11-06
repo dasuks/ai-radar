@@ -16,6 +16,7 @@ const USAGE = `ai-radar daily
   --skip-notion       Notion 채널 건너뛰기
   --skip-obsidian     Obsidian 채널 건너뛰기 (Librarian 도 함께 건너뛴다)
   --skip-librarian    Librarian 만 건너뛰기
+  --skip-discord      Discord 채널 건너뛰기
   --help              이 도움말`;
 
 /** 종료 코드 1 로 끝나는 Run 상태 (PARTIAL_SUCCESS 는 경고만 남기고 0). */
@@ -39,6 +40,7 @@ export interface DailyCliArgs {
   skipNotion: boolean;
   skipObsidian: boolean;
   skipLibrarian: boolean;
+  skipDiscord: boolean;
   help: boolean;
 }
 
@@ -50,6 +52,7 @@ export function parseDailyArgs(argv: string[]): DailyCliArgs {
     skipNotion: false,
     skipObsidian: false,
     skipLibrarian: false,
+    skipDiscord: false,
     help: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
@@ -80,6 +83,9 @@ export function parseDailyArgs(argv: string[]): DailyCliArgs {
         break;
       case "--skip-librarian":
         args.skipLibrarian = true;
+        break;
+      case "--skip-discord":
+        args.skipDiscord = true;
         break;
       case "--help":
       case "-h":
@@ -119,6 +125,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       skipNotion: args.skipNotion,
       skipObsidian: args.skipObsidian,
       skipLibrarian: args.skipLibrarian,
+      skipDiscord: args.skipDiscord,
     });
 
     printSummary(result, redaction, args.dryRun);

@@ -108,10 +108,10 @@ codex login status
 
 ### 매일 자동 실행 (Windows Task Scheduler)
 
-Windows Task Scheduler 에 "AI Radar Daily" 작업이 매일 07:00에 `scripts/run-daily.cmd` 를 실행하도록 등록되어 있습니다. 등록에 쓴 명령은 다음과 같습니다.
+Windows Task Scheduler 에 "AI Radar Daily" 작업이 매일 00:00에 `scripts/run-daily.cmd` 를 실행하도록 등록되어 있습니다. 등록에 쓴 명령은 다음과 같습니다.
 
 ```powershell
-schtasks /Create /TN "AI Radar Daily" /TR "C:\dev\projects\ai-radar\scripts\run-daily.cmd" /SC DAILY /ST 07:00
+schtasks /Create /TN "AI Radar Daily" /TR "C:\dev\projects\ai-radar\scripts\run-daily.cmd" /SC DAILY /ST 00:00
 ```
 
 `scripts/run-daily.cmd` 는 `npm run daily` 를 호출하고 표준출력·표준에러를 `data/store/logs/<yyyy-mm-dd>.log` 에 남깁니다. 이 스케줄이 매일 동작하려면 PC 가 켜져 있어야 하고 Codex 로그인이 유지돼야 합니다(위 `codex login status` 로 주기적으로 확인하세요). 작업을 지우려면 다음을 실행합니다.

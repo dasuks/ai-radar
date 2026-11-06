@@ -165,7 +165,8 @@ INTELLIGENCE (claims, signals, entities)  ──▶  CONTENT CREATION (Artifact 
 | notion | PRIVATE 허용 | POLICY 자동 | in-place 갱신 | (artifactId, channel) + Date 조회 |
 | obsidian | PRIVATE 허용 | POLICY 자동 | 관리 영역 교체 | 파일 경로 + 마커 |
 | discord / email (향후) | PRIVATE 허용 (수신자가 본인뿐인 개인 채널일 때) | POLICY 자동, 단 revision당 1회 발송 | 불가 → 새 revision은 "수정본" 표시 후 재발송 | (artifactId, channel, revision) |
-| discord / email (수신자에 제3자 포함) | **PUBLIC_OK 필수** | **USER 승인 필수** (instagram과 동일 규칙) | 불가 | 동일 |
+| discord (ADR-0010의 지정 멤버 서버) | 공개 출처 전용 DISCORD_EDITION, PRIVATE 배포 | 사용자 지정 범위 내 POLICY 자동 | 기존 메시지 수정, revision 표시 | 서버 + 날짜 + 항목 ID |
+| discord / email (그 외 제3자 수신) | **PUBLIC_OK 필수** | **USER 승인 필수** (instagram과 동일 규칙) | 불가 | 동일 |
 | instagram / web (향후) | **PUBLIC_OK 필수** | **USER 승인 필수**, contentHash + renderedAssetHash 잠금 | 불가 → 정정은 새 Artifact(RETRACTION) | (artifactId, channel) + externalId |
 
 ### 6.3 Instagram 미래 flow (설계만)

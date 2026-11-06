@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "daily": "tsx src/runtime/cli/daily.ts",
+    "discord": "tsx src/runtime/cli/discord.ts",
     "test": "npm run test:build && node --test \".test-dist/test/**/*.test.js\"",
     "test:build": "node -e \"require('fs').rmSync('.test-dist',{recursive:true,force:true})\" && tsc --noEmit false --outDir .test-dist --rootDir . --declaration false --declarationMap false --sourceMap false",
     "typecheck": "tsc --noEmit"
